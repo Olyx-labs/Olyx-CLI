@@ -1,0 +1,10 @@
+[package]
+name = "olyx-cli"
+version = "0.1.0"
+edition = "2024"
+description = "Olyx command-line client for local execution and enterprise agent workflows"
+license = "Apache-2.0"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
