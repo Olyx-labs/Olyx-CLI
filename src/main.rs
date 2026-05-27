@@ -1,6 +1,8 @@
+use olyx_core::{RuntimeVerifier, SignedEnvelope};
 use serde_json::{Value, json};
 use std::env;
 use std::fmt;
+use std::fs;
 use std::process;
 
 const DEFAULT_BASE_URL: &str = "https://app.olyxai.io";
@@ -67,8 +69,25 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             "base_url": invocation.base_url,
             "api_key_present": invocation.api_key.is_some(),
             "dry_run": invocation.dry_run,
-            "secrets_boundary": "customer_environment"
+            "secrets_boundary": "customer_environment",
+            "core_runtime": runtime_env_status()
         })),
+        Command::VerifyRuntime {
+            license_path,
+            policy_path,
+            key_id,
+            public_key_b64,
+            public_key_path,
+        } => {
+            let status = verify_runtime(
+                license_path.as_deref(),
+                policy_path.as_deref(),
+                key_id.as_deref(),
+                public_key_b64.as_deref(),
+                public_key_path.as_deref(),
+            )?;
+            print_json(&serde_json::to_value(status).map_err(|e| CliError::message(e.to_string()))?)
+        }
         Command::Help => {
             println!("{}", usage());
             Ok(())
@@ -146,6 +165,13 @@ enum Command {
     Replay {
         trace_id: String,
     },
+    VerifyRuntime {
+        license_path: Option<String>,
+        policy_path: Option<String>,
+        key_id: Option<String>,
+        public_key_b64: Option<String>,
+        public_key_path: Option<String>,
+    },
     Doctor,
     Help,
 }
@@ -158,6 +184,7 @@ impl Command {
             Some("doctor") => Ok(Self::Doctor),
             Some("trace") => parse_trace(args),
             Some("replay") => parse_replay(args),
+            Some("verify-runtime") => parse_verify_runtime(args),
             Some(other) => Err(CliError::usage(format!("unknown command: {other}"))),
         }
     }
@@ -206,6 +233,143 @@ fn parse_replay(args: Vec<String>) -> Result<Command, CliError> {
 
     Ok(Command::Replay {
         trace_id: args[1].clone(),
+    })
+}
+
+fn parse_verify_runtime(args: Vec<String>) -> Result<Command, CliError> {
+    let mut license_path = None;
+    let mut policy_path = None;
+    let mut key_id = None;
+    let mut public_key_b64 = None;
+    let mut public_key_path = None;
+    let mut i = 1;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--license" => {
+                i += 1;
+                license_path = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| CliError::usage("--license requires a path"))?,
+                );
+            }
+            "--policy" => {
+                i += 1;
+                policy_path = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| CliError::usage("--policy requires a path"))?,
+                );
+            }
+            "--key-id" => {
+                i += 1;
+                key_id = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| CliError::usage("--key-id requires a value"))?,
+                );
+            }
+            "--public-key-b64" => {
+                i += 1;
+                public_key_b64 = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| CliError::usage("--public-key-b64 requires a value"))?,
+                );
+            }
+            "--public-key-file" => {
+                i += 1;
+                public_key_path = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| CliError::usage("--public-key-file requires a path"))?,
+                );
+            }
+            other => {
+                return Err(CliError::usage(format!(
+                    "unknown verify-runtime argument: {other}"
+                )));
+            }
+        }
+        i += 1;
+    }
+
+    Ok(Command::VerifyRuntime {
+        license_path,
+        policy_path,
+        key_id,
+        public_key_b64,
+        public_key_path,
+    })
+}
+
+fn verify_runtime(
+    license_path: Option<&str>,
+    policy_path: Option<&str>,
+    key_id: Option<&str>,
+    public_key_b64: Option<&str>,
+    public_key_path: Option<&str>,
+) -> Result<olyx_core::RuntimeStatus, CliError> {
+    let license_path = license_path
+        .map(str::to_string)
+        .or_else(|| env::var("OLYX_LICENSE_PATH").ok())
+        .ok_or_else(|| {
+            CliError::usage("missing license path; pass --license or set OLYX_LICENSE_PATH")
+        })?;
+    let policy_path = policy_path
+        .map(str::to_string)
+        .or_else(|| env::var("OLYX_POLICY_PACK_PATH").ok())
+        .ok_or_else(|| {
+            CliError::usage("missing policy path; pass --policy or set OLYX_POLICY_PACK_PATH")
+        })?;
+    let key_id = key_id
+        .map(str::to_string)
+        .or_else(|| env::var("OLYX_POLICY_KEY_ID").ok())
+        .ok_or_else(|| {
+            CliError::usage("missing key id; pass --key-id or set OLYX_POLICY_KEY_ID")
+        })?;
+    let public_key_b64 = public_key_b64
+        .map(str::to_string)
+        .or_else(|| env::var("OLYX_POLICY_PUBLIC_KEY_B64").ok())
+        .or_else(|| {
+            let path = public_key_path
+                .map(str::to_string)
+                .or_else(|| env::var("OLYX_POLICY_PUBLIC_KEY_PATH").ok())?;
+            fs::read_to_string(path).ok()
+        })
+        .ok_or_else(|| {
+            CliError::usage(
+                "missing public key; pass --public-key-b64, --public-key-file, or set OLYX_POLICY_PUBLIC_KEY_B64",
+            )
+        })?;
+
+    let license = read_signed_envelope(&license_path)?;
+    let policy_pack = read_signed_envelope(&policy_path)?;
+    let verifier = RuntimeVerifier::from_public_key_b64(key_id, &public_key_b64)
+        .map_err(|e| CliError::message(format!("runtime public key rejected: {e}")))?;
+    let runtime = verifier
+        .load_runtime(&license, &policy_pack)
+        .map_err(|e| CliError::message(format!("runtime verification failed: {e}")))?;
+
+    Ok(runtime.status())
+}
+
+fn read_signed_envelope(path: &str) -> Result<SignedEnvelope, CliError> {
+    let raw = fs::read_to_string(path)
+        .map_err(|e| CliError::message(format!("failed to read {path}: {e}")))?;
+    serde_json::from_str(&raw)
+        .map_err(|e| CliError::message(format!("invalid signed envelope JSON at {path}: {e}")))
+}
+
+fn runtime_env_status() -> Value {
+    json!({
+        "license_path_present": env::var("OLYX_LICENSE_PATH").is_ok(),
+        "policy_pack_path_present": env::var("OLYX_POLICY_PACK_PATH").is_ok(),
+        "key_id_present": env::var("OLYX_POLICY_KEY_ID").is_ok(),
+        "public_key_present": env::var("OLYX_POLICY_PUBLIC_KEY_B64").is_ok()
+            || env::var("OLYX_POLICY_PUBLIC_KEY_PATH").is_ok(),
+        "activation_command": "olyx verify-runtime"
     })
 }
 
@@ -288,11 +452,17 @@ Usage:
   olyx config [--base-url URL] [--api-key KEY] [--dry-run]
   olyx trace [--metadata JSON] [--local-ref REF] [--base-url URL] [--api-key KEY] [--dry-run]
   olyx replay <trace_id> [--base-url URL] [--api-key KEY] [--dry-run]
+  olyx verify-runtime --license PATH --policy PATH --key-id KID (--public-key-b64 KEY | --public-key-file PATH)
   olyx doctor [--base-url URL] [--api-key KEY] [--dry-run]
 
 Environment:
-  OLYX_BASE_URL  Defaults to https://app.olyxai.io
-  OLYX_API_KEY   Project-scoped Olyx API key
+  OLYX_BASE_URL                Defaults to https://app.olyxai.io
+  OLYX_API_KEY                 Project-scoped Olyx API key
+  OLYX_LICENSE_PATH            Signed license envelope JSON
+  OLYX_POLICY_PACK_PATH        Signed policy-pack envelope JSON
+  OLYX_POLICY_KEY_ID           Expected Olyx signing key id
+  OLYX_POLICY_PUBLIC_KEY_B64   Ed25519 public key, base64url or standard base64
+  OLYX_POLICY_PUBLIC_KEY_PATH  File containing the public key
 "#
 }
 
