@@ -6,6 +6,7 @@ description = "Olyx command-line client for local execution and enterprise agent
 license = "Apache-2.0"
 
 [dependencies]
+olyx-core = { workspace = true }
 reqwest = { version = "0.12", features = ["json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
