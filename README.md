@@ -18,6 +18,10 @@ cargo build -p olyx-cli --release
 ./target/release/olyx help
 ```
 
+Release binaries are published through GitHub Releases. The release workflow
+builds the public CLI against the private compiled core in CI and uploads
+checksummed binaries only.
+
 ## Quickstart
 
 ```sh

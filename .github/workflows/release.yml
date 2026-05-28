@@ -1,0 +1,157 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            asset_name: olyx-linux-x86_64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            asset_name: olyx-darwin-x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset_name: olyx-darwin-aarch64
+
+    steps:
+      - name: Checkout CLI
+        uses: actions/checkout@v4
+        with:
+          path: release-workspace/olyx-cli
+
+      - name: Checkout private core
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.OLYX_CORE_REPOSITORY }}
+          token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
+          path: release-workspace/Olyx-core
+
+      - name: Create release workspace
+        working-directory: release-workspace
+        shell: bash
+        run: |
+          cat > Cargo.toml <<'TOML'
+          [workspace]
+          members = ["Olyx-core", "olyx-cli"]
+          resolver = "2"
+
+          [workspace.dependencies]
+          aho-corasick = "1.1"
+          regex = "1.10"
+          serde = { version = "1.0", features = ["derive"] }
+          serde_json = "1.0"
+          olyx-core = { path = "Olyx-core" }
+
+          [profile.release]
+          codegen-units = 1
+          lto = "thin"
+          opt-level = "z"
+          panic = "abort"
+          strip = "symbols"
+          TOML
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: release-workspace
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Test
+        working-directory: release-workspace
+        run: cargo test -p olyx-cli -p olyx-core
+
+      - name: Build release binary
+        working-directory: release-workspace
+        run: cargo build -p olyx-cli --release --target ${{ matrix.target }}
+
+      - name: Prepare artifact
+        working-directory: release-workspace
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/olyx dist/${{ matrix.asset_name }}
+          strip dist/${{ matrix.asset_name }} || true
+          shasum -a 256 dist/${{ matrix.asset_name }} > dist/${{ matrix.asset_name }}.sha256
+          cosign sign-blob --yes \
+            --output-signature dist/${{ matrix.asset_name }}.sig \
+            --output-certificate dist/${{ matrix.asset_name }}.pem \
+            dist/${{ matrix.asset_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: |
+            release-workspace/dist/${{ matrix.asset_name }}
+            release-workspace/dist/${{ matrix.asset_name }}.sha256
+            release-workspace/dist/${{ matrix.asset_name }}.sig
+            release-workspace/dist/${{ matrix.asset_name }}.pem
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.value }}
+          generate_release_notes: true
+          files: |
+            dist/olyx-linux-x86_64
+            dist/olyx-linux-x86_64.sha256
+            dist/olyx-linux-x86_64.sig
+            dist/olyx-linux-x86_64.pem
+            dist/olyx-darwin-x86_64
+            dist/olyx-darwin-x86_64.sha256
+            dist/olyx-darwin-x86_64.sig
+            dist/olyx-darwin-x86_64.pem
+            dist/olyx-darwin-aarch64
+            dist/olyx-darwin-aarch64.sha256
+            dist/olyx-darwin-aarch64.sig
+            dist/olyx-darwin-aarch64.pem
