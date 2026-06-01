@@ -87,6 +87,22 @@ olyx trace --metadata '{"environment":"production","service":"checkout","operati
 
 `OLYX_BASE_URL` defaults to `https://app.olyxai.io`.
 
+## Public API Contract
+
+The CLI speaks a narrow JSON protocol over HTTPS:
+
+| Command | Endpoint |
+| :--- | :--- |
+| `olyx config` | `GET /api/v1/sdk/config` |
+| `olyx trace` | `POST /api/v1/traces` |
+| `olyx replay` | `POST /api/v1/replay` |
+
+Every cloud request sends the project key as `Authorization: Bearer $OLYX_API_KEY` and expects JSON. Public API errors use this shape:
+
+```json
+{ "error": "message", "code": "machine_code", "request_id": "req_..." }
+```
+
 ## Commands
 
 ```sh
@@ -212,7 +228,31 @@ The compiled core refuses to activate unless the envelope uses `EdDSA`, the
 license and policy pack are inside their validity windows, and both are bound to
 the same `project_id`. The CLI also requires the signed license to include the
 `cli` runtime mode; an `edge`-only or `failover`-only license will not activate
-through `olyx verify-runtime`.
+through `olyx verify-runtime`. Signed envelopes use a strict schema: unknown
+top-level, protected-header, license, policy-pack, or policy-rule fields are
+rejected instead of ignored.
+
+Unsigned, malformed, oversized, expired, not-yet-valid, tampered, wrong-key,
+wrong-project, or wrong-runtime artifacts fail closed and return a non-zero exit
+code.
+
+### Signing Key Rotation
+
+Olyx signing keys are identified by `kid`. The customer runtime trusts one key
+at a time by setting both the expected key id and the matching public key:
+
+```sh
+export OLYX_POLICY_KEY_ID="olyx-prod-2026-01"
+export OLYX_POLICY_PUBLIC_KEY_PATH="./olyx-prod-2026-01.pub"
+olyx verify-runtime
+```
+
+For rotation, Olyx issues a new public key and switches future license/policy
+packs to the new `kid`. Customers update `OLYX_POLICY_KEY_ID` and
+`OLYX_POLICY_PUBLIC_KEY_PATH`, then run `olyx verify-runtime` before deploying
+the new artifacts. During a planned rotation window, keep both public keys in
+your secrets manager, but configure each runtime with exactly the `kid` expected
+for the artifacts it is activating.
 
 Successful verification prints runtime status:
 

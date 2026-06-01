@@ -6,6 +6,7 @@ use std::fs;
 use std::process;
 
 const DEFAULT_BASE_URL: &str = "https://app.olyxai.io";
+const MAX_SIGNED_ENVELOPE_FILE_BYTES: u64 = 3 * 1024 * 1024;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
@@ -405,10 +406,32 @@ fn verify_runtime(
 }
 
 fn read_signed_envelope(path: &str) -> Result<SignedEnvelope, CliError> {
-    let raw = fs::read_to_string(path)
-        .map_err(|e| CliError::message(format!("failed to read {path}: {e}")))?;
-    serde_json::from_str(&raw)
-        .map_err(|e| CliError::message(format!("invalid signed envelope JSON at {path}: {e}")))
+    let metadata = fs::metadata(path).map_err(|e| {
+        CliError::message(format!(
+            "failed to inspect signed envelope file {}: {e}",
+            redact_path(path)
+        ))
+    })?;
+    if metadata.len() > MAX_SIGNED_ENVELOPE_FILE_BYTES {
+        return Err(CliError::message(format!(
+            "signed envelope file {} exceeds {} bytes",
+            redact_path(path),
+            MAX_SIGNED_ENVELOPE_FILE_BYTES
+        )));
+    }
+
+    let raw = fs::read_to_string(path).map_err(|e| {
+        CliError::message(format!(
+            "failed to read signed envelope file {}: {e}",
+            redact_path(path)
+        ))
+    })?;
+    serde_json::from_str(&raw).map_err(|e| {
+        CliError::message(format!(
+            "invalid signed envelope JSON at {}: {e}",
+            redact_path(path)
+        ))
+    })
 }
 
 fn read_public_key_file(path: &str) -> Result<String, CliError> {
@@ -490,7 +513,7 @@ async fn request_json(
     } else {
         Err(CliError::message(format!(
             "request returned HTTP {status}: {}",
-            truncate_for_error(&json_body.to_string())
+            format_api_error(&json_body)
         )))
     }
 }
@@ -529,6 +552,25 @@ fn truncate_for_error(raw: &str) -> String {
         format!("{}...", trimmed.chars().take(500).collect::<String>())
     } else {
         trimmed.to_string()
+    }
+}
+
+fn format_api_error(value: &Value) -> String {
+    let message = value
+        .get("error")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("message").and_then(Value::as_str));
+    let code = value.get("code").and_then(Value::as_str);
+    let request_id = value.get("request_id").and_then(Value::as_str);
+
+    match (message, code, request_id) {
+        (Some(message), Some(code), Some(request_id)) => {
+            format!("{message} ({code}, request_id={request_id})")
+        }
+        (Some(message), Some(code), None) => format!("{message} ({code})"),
+        (Some(message), None, Some(request_id)) => format!("{message} (request_id={request_id})"),
+        (Some(message), None, None) => message.to_string(),
+        _ => truncate_for_error(&value.to_string()),
     }
 }
 
@@ -696,6 +738,46 @@ mod tests {
         assert!(require_api_key(&blank_key).is_err());
     }
 
+    #[test]
+    fn signed_envelope_reader_rejects_oversized_files() {
+        let path = std::env::temp_dir().join(format!(
+            "olyx-cli-oversized-envelope-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(
+            &path,
+            vec![b' '; (MAX_SIGNED_ENVELOPE_FILE_BYTES + 1) as usize],
+        )
+        .unwrap();
+
+        let error = read_signed_envelope(path.to_str().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("exceeds"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn signed_envelope_reader_rejects_invalid_json() {
+        let path = std::env::temp_dir().join(format!(
+            "olyx-cli-invalid-envelope-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, "not-json").unwrap();
+
+        let error = read_signed_envelope(path.to_str().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("invalid signed envelope JSON"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
     #[tokio::test]
     async fn dry_run_returns_request_shape() {
         let body = json!({ "trace_id": "trace_123" });
@@ -715,5 +797,16 @@ mod tests {
         assert_eq!(response["url"], "https://app.olyxai.io/api/v1/replay");
         assert_eq!(response["api_key_present"], false);
         assert_eq!(response["body"], body);
+    }
+
+    #[test]
+    fn formats_public_api_error_shape() {
+        let message = format_api_error(&json!({
+            "error": "Unauthorized",
+            "code": "unauthorized",
+            "request_id": "req_123"
+        }));
+
+        assert_eq!(message, "Unauthorized (unauthorized, request_id=req_123)");
     }
 }
