@@ -196,6 +196,10 @@ jobs:
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               ${asset}.tar.gz
           EOF
+          find "dist/${asset}" -maxdepth 2 -type f | sort
+          test ! -e "dist/${asset}/Olyx-core"
+          test ! -e "dist/${asset}/src"
+          test ! -e "dist/${asset}/Cargo.toml"
           tar -C dist -czf "dist/${asset}.tar.gz" "${asset}"
           shasum -a 256 "dist/${asset}.tar.gz" > "dist/${asset}.tar.gz.sha256"
           cosign sign-blob --yes \
