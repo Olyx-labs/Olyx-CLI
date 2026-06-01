@@ -1,4 +1,4 @@
-use olyx_core::{RuntimeVerifier, SignedEnvelope};
+use olyx_core::{RuntimeMode, RuntimeVerifier, SignedEnvelope};
 use serde_json::{Value, json};
 use std::env;
 use std::fmt;
@@ -379,12 +379,14 @@ fn verify_runtime(
     let public_key_b64 = public_key_b64
         .map(str::to_string)
         .or_else(|| env::var("OLYX_POLICY_PUBLIC_KEY_B64").ok())
+        .map(Ok)
         .or_else(|| {
             let path = public_key_path
                 .map(str::to_string)
                 .or_else(|| env::var("OLYX_POLICY_PUBLIC_KEY_PATH").ok())?;
-            fs::read_to_string(path).ok()
+            Some(read_public_key_file(&path))
         })
+        .transpose()?
         .ok_or_else(|| {
             CliError::usage(
                 "missing public key; pass --public-key-b64, --public-key-file, or set OLYX_POLICY_PUBLIC_KEY_B64",
@@ -396,7 +398,7 @@ fn verify_runtime(
     let verifier = RuntimeVerifier::from_public_key_b64(key_id, &public_key_b64)
         .map_err(|e| CliError::message(format!("runtime public key rejected: {e}")))?;
     let runtime = verifier
-        .load_runtime(&license, &policy_pack)
+        .load_runtime_for_mode(&license, &policy_pack, RuntimeMode::Cli)
         .map_err(|e| CliError::message(format!("runtime verification failed: {e}")))?;
 
     Ok(runtime.status())
@@ -407,6 +409,24 @@ fn read_signed_envelope(path: &str) -> Result<SignedEnvelope, CliError> {
         .map_err(|e| CliError::message(format!("failed to read {path}: {e}")))?;
     serde_json::from_str(&raw)
         .map_err(|e| CliError::message(format!("invalid signed envelope JSON at {path}: {e}")))
+}
+
+fn read_public_key_file(path: &str) -> Result<String, CliError> {
+    fs::read_to_string(path).map_err(|e| {
+        CliError::message(format!(
+            "failed to read public key file {}: {e}",
+            redact_path(path)
+        ))
+    })
+}
+
+fn redact_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.len() > 120 {
+        format!("{}...", trimmed.chars().take(120).collect::<String>())
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn runtime_env_status() -> Value {
