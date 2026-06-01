@@ -33,8 +33,7 @@ olyx config
 olyx trace --metadata '{"environment":"production","service":"checkout","operation":"cart.create"}'
 ```
 
-`OLYX_BASE_URL` defaults to `https://app.olyxai.io`. `gateway.olyxai.io` is
-reserved for a future endpoint split.
+`OLYX_BASE_URL` defaults to `https://app.olyxai.io`.
 
 ## Commands
 

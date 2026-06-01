@@ -6,17 +6,24 @@ use std::fs;
 use std::process;
 
 const DEFAULT_BASE_URL: &str = "https://app.olyxai.io";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
 async fn main() {
     if let Err(error) = run(env::args().skip(1).collect()).await {
         eprintln!("error: {error}");
-        process::exit(1);
+        process::exit(error.exit_code());
     }
 }
 
 async fn run(args: Vec<String>) -> Result<(), CliError> {
     let invocation = Invocation::parse(args)?;
+    if matches!(
+        &invocation.command,
+        Command::Config | Command::Trace { .. } | Command::Replay { .. }
+    ) {
+        require_api_key(&invocation)?;
+    }
 
     match invocation.command {
         Command::Config => {
@@ -92,6 +99,10 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             println!("{}", usage());
             Ok(())
         }
+        Command::Version => {
+            println!("olyx {VERSION}");
+            Ok(())
+        }
     }
 }
 
@@ -112,7 +123,6 @@ impl Invocation {
             .filter(|s| !s.trim().is_empty());
         let mut dry_run = false;
         let mut positionals = Vec::new();
-        let mut command_seen = false;
 
         let mut i = 0;
         while i < args.len() {
@@ -133,12 +143,26 @@ impl Invocation {
                     );
                 }
                 "--dry-run" => dry_run = true,
-                "-h" | "--help" => positionals.push("help".to_string()),
-                other if other.starts_with("--") && !command_seen => {
+                "-h" | "--help" => {
+                    return Ok(Self::for_command(
+                        Command::Help,
+                        base_url,
+                        api_key,
+                        dry_run,
+                    )?);
+                }
+                "-V" | "--version" => {
+                    return Ok(Self::for_command(
+                        Command::Version,
+                        base_url,
+                        api_key,
+                        dry_run,
+                    )?);
+                }
+                other if other.starts_with("--") && positionals.is_empty() => {
                     return Err(CliError::usage(format!("unknown flag: {other}")));
                 }
                 other => {
-                    command_seen = true;
                     positionals.push(other.to_string());
                 }
             }
@@ -146,9 +170,24 @@ impl Invocation {
         }
 
         let command = Command::parse(positionals)?;
+        Self::for_command(command, base_url, api_key, dry_run)
+    }
+
+    fn for_command(
+        command: Command,
+        base_url: String,
+        api_key: Option<String>,
+        dry_run: bool,
+    ) -> Result<Self, CliError> {
+        let base_url = if matches!(command, Command::Help | Command::Version) {
+            DEFAULT_BASE_URL.to_string()
+        } else {
+            normalize_base_url(&base_url)?
+        };
+
         Ok(Self {
             command,
-            base_url: normalize_base_url(&base_url)?,
+            base_url,
             api_key,
             dry_run,
         })
@@ -174,6 +213,7 @@ enum Command {
     },
     Inspect,
     Help,
+    Version,
 }
 
 impl Command {
@@ -185,8 +225,21 @@ impl Command {
             Some("trace") => parse_trace(args),
             Some("replay") => parse_replay(args),
             Some("verify-runtime") => parse_verify_runtime(args),
-            Some(other) => Err(CliError::usage(format!("unknown command: {other}"))),
+            Some(other) => Err(CliError::usage(format!(
+                "unknown command: {}",
+                redact_argument(other)
+            ))),
         }
+    }
+}
+
+fn require_api_key(invocation: &Invocation) -> Result<(), CliError> {
+    if invocation.api_key.is_some() || invocation.dry_run {
+        Ok(())
+    } else {
+        Err(CliError::usage(
+            "OLYX_API_KEY is required; export it or pass --api-key",
+        ))
     }
 }
 
@@ -386,6 +439,7 @@ async fn request_json(
             "dry_run": true,
             "method": method,
             "url": format!("{base_url}{path}"),
+            "api_key_present": api_key.is_some(),
             "body": body
         }));
     }
@@ -421,7 +475,8 @@ async fn request_json(
         Ok(json_body)
     } else {
         Err(CliError::message(format!(
-            "request returned HTTP {status}: {json_body}"
+            "request returned HTTP {status}: {}",
+            truncate_for_error(&json_body.to_string())
         )))
     }
 }
@@ -445,15 +500,42 @@ fn print_json(value: &Value) -> Result<(), CliError> {
     Ok(())
 }
 
+fn redact_argument(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.len() > 80 {
+        format!("{}...", trimmed.chars().take(80).collect::<String>())
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn truncate_for_error(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.len() > 500 {
+        format!("{}...", trimmed.chars().take(500).collect::<String>())
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn usage() -> &'static str {
     r#"olyx CLI
 
 Usage:
+  olyx help
+  olyx --version
+  olyx inspect [--base-url URL] [--api-key KEY] [--dry-run]
   olyx config [--base-url URL] [--api-key KEY] [--dry-run]
   olyx trace [--metadata JSON] [--local-ref REF] [--base-url URL] [--api-key KEY] [--dry-run]
   olyx replay <trace_id> [--base-url URL] [--api-key KEY] [--dry-run]
   olyx verify-runtime --license PATH --policy PATH --key-id KID (--public-key-b64 KEY | --public-key-file PATH)
-  olyx inspect [--base-url URL] [--api-key KEY] [--dry-run]
+
+Global Options:
+  --base-url URL     Olyx API base URL. Defaults to https://app.olyxai.io
+  --api-key KEY      Project-scoped Olyx API key. Prefer OLYX_API_KEY in production.
+  --dry-run          Print the request shape without sending it.
+  -h, --help         Print this help text.
+  -V, --version      Print the CLI version.
 
 Environment:
   OLYX_BASE_URL                Defaults to https://app.olyxai.io
@@ -469,19 +551,26 @@ Environment:
 #[derive(Debug)]
 struct CliError {
     message: String,
+    exit_code: i32,
 }
 
 impl CliError {
     fn usage(message: impl Into<String>) -> Self {
         Self {
             message: format!("{}\n\n{}", message.into(), usage()),
+            exit_code: 2,
         }
     }
 
     fn message(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            exit_code: 1,
         }
+    }
+
+    fn exit_code(&self) -> i32 {
+        self.exit_code
     }
 }
 
@@ -521,13 +610,68 @@ mod tests {
     }
 
     #[test]
-    fn parses_inspect_and_rejects_doctor_alias() {
+    fn parses_inspect_and_rejects_removed_alias() {
         let invocation = Invocation::parse(vec!["inspect".into()]).unwrap();
         assert_eq!(invocation.command, Command::Inspect);
 
         let removed_command = ["doc", "tor"].concat();
         let error = Invocation::parse(vec![removed_command]).unwrap_err();
         assert!(error.to_string().contains("unknown command"));
+    }
+
+    #[test]
+    fn parses_global_flags_after_command() {
+        let invocation = Invocation::parse(vec![
+            "trace".into(),
+            "--metadata".into(),
+            r#"{"source":"test"}"#.into(),
+            "--dry-run".into(),
+            "--api-key".into(),
+            "ak_test".into(),
+            "--base-url".into(),
+            "https://app.olyxai.io/".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(invocation.base_url, "https://app.olyxai.io");
+        assert_eq!(invocation.api_key.as_deref(), Some("ak_test"));
+        assert!(invocation.dry_run);
+        assert_eq!(
+            invocation.command,
+            Command::Trace {
+                metadata: Some(json!({ "source": "test" })),
+                local_ref: None
+            }
+        );
+    }
+
+    #[test]
+    fn parses_help_and_version_without_api_key() {
+        let help = Invocation::parse(vec!["--help".into()]).unwrap();
+        assert_eq!(help.command, Command::Help);
+
+        let version = Invocation::parse(vec!["--version".into()]).unwrap();
+        assert_eq!(version.command, Command::Version);
+    }
+
+    #[test]
+    fn network_commands_require_api_key_unless_dry_run() {
+        let invocation = Invocation {
+            command: Command::Config,
+            base_url: DEFAULT_BASE_URL.to_string(),
+            api_key: None,
+            dry_run: false,
+        };
+
+        let error = require_api_key(&invocation).unwrap_err();
+        assert_eq!(error.exit_code(), 2);
+        assert!(error.to_string().contains("OLYX_API_KEY is required"));
+
+        let dry_run = Invocation {
+            dry_run: true,
+            ..invocation
+        };
+        assert!(require_api_key(&dry_run).is_ok());
     }
 
     #[tokio::test]
@@ -547,6 +691,7 @@ mod tests {
         assert_eq!(response["dry_run"], true);
         assert_eq!(response["method"], "POST");
         assert_eq!(response["url"], "https://app.olyxai.io/api/v1/replay");
+        assert_eq!(response["api_key_present"], false);
         assert_eq!(response["body"], body);
     }
 }
