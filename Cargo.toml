@@ -5,6 +5,10 @@ edition = "2024"
 description = "Olyx command-line client for local execution and enterprise agent workflows"
 license = "Apache-2.0"
 
+[[bin]]
+name = "olyx"
+path = "src/main.rs"
+
 [dependencies]
 olyx-core = { workspace = true }
 reqwest = { version = "0.12", features = ["json"] }

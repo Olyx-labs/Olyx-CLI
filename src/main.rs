@@ -74,7 +74,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
         }
         Command::Inspect => print_json(&json!({
             "base_url": invocation.base_url,
-            "api_key_present": invocation.api_key.is_some(),
+            "api_key_present": api_key_present(invocation.api_key.as_deref()),
             "dry_run": invocation.dry_run,
             "secrets_boundary": "customer_environment",
             "core_runtime": runtime_env_status()
@@ -144,20 +144,10 @@ impl Invocation {
                 }
                 "--dry-run" => dry_run = true,
                 "-h" | "--help" => {
-                    return Ok(Self::for_command(
-                        Command::Help,
-                        base_url,
-                        api_key,
-                        dry_run,
-                    )?);
+                    return Self::for_command(Command::Help, base_url, api_key, dry_run);
                 }
                 "-V" | "--version" => {
-                    return Ok(Self::for_command(
-                        Command::Version,
-                        base_url,
-                        api_key,
-                        dry_run,
-                    )?);
+                    return Self::for_command(Command::Version, base_url, api_key, dry_run);
                 }
                 other if other.starts_with("--") && positionals.is_empty() => {
                     return Err(CliError::usage(format!("unknown flag: {other}")));
@@ -234,13 +224,17 @@ impl Command {
 }
 
 fn require_api_key(invocation: &Invocation) -> Result<(), CliError> {
-    if invocation.api_key.is_some() || invocation.dry_run {
+    if api_key_present(invocation.api_key.as_deref()) || invocation.dry_run {
         Ok(())
     } else {
         Err(CliError::usage(
             "OLYX_API_KEY is required; export it or pass --api-key",
         ))
     }
+}
+
+fn api_key_present(api_key: Option<&str>) -> bool {
+    api_key.is_some_and(|value| !value.trim().is_empty())
 }
 
 fn parse_trace(args: Vec<String>) -> Result<Command, CliError> {
@@ -439,7 +433,7 @@ async fn request_json(
             "dry_run": true,
             "method": method,
             "url": format!("{base_url}{path}"),
-            "api_key_present": api_key.is_some(),
+            "api_key_present": api_key_present(api_key),
             "body": body
         }));
     }
@@ -672,6 +666,14 @@ mod tests {
             ..invocation
         };
         assert!(require_api_key(&dry_run).is_ok());
+
+        let blank_key = Invocation {
+            command: Command::Config,
+            base_url: DEFAULT_BASE_URL.to_string(),
+            api_key: Some("  ".into()),
+            dry_run: false,
+        };
+        assert!(require_api_key(&blank_key).is_err());
     }
 
     #[tokio::test]
