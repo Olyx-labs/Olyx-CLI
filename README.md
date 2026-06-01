@@ -210,7 +210,9 @@ The signed envelope shape is:
 The compiled core refuses to activate unless the envelope uses `EdDSA`, the
 `kid` matches the configured Olyx signing key, the signature verifies, the
 license and policy pack are inside their validity windows, and both are bound to
-the same `project_id`.
+the same `project_id`. The CLI also requires the signed license to include the
+`cli` runtime mode; an `edge`-only or `failover`-only license will not activate
+through `olyx verify-runtime`.
 
 Successful verification prints runtime status:
 
@@ -331,3 +333,10 @@ environment.
 Olyx Cloud receives policy/config requests, trace metadata, opaque local
 references, and replay coordination requests. Private enforcement remains in the
 compiled `olyx-core` runtime and, for enterprise deployments, the outbound agent.
+
+The public repository intentionally contains only the CLI command surface,
+transport code, and release packaging. `olyx-core` source, policy evaluation
+internals, scrubbing logic, block injection logic, signing keys, and license
+issuance logic remain private. Public release binaries are built in CI from the
+public CLI plus the private compiled core and are distributed only as signed,
+checksummed archives.
