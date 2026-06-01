@@ -28,7 +28,7 @@ checksummed binaries only.
 export OLYX_API_KEY="ak_..."
 export OLYX_BASE_URL="https://app.olyxai.io"
 
-olyx doctor
+olyx inspect
 olyx config
 olyx trace --metadata '{"environment":"production","service":"checkout","operation":"cart.create"}'
 ```
@@ -40,7 +40,7 @@ reserved for a future endpoint split.
 
 ```sh
 olyx help
-olyx doctor
+olyx inspect
 olyx config
 olyx trace --metadata JSON
 olyx trace --local-ref REF
@@ -198,7 +198,7 @@ Example GitHub Actions step:
     OLYX_API_KEY: ${{ secrets.OLYX_API_KEY }}
     OLYX_BASE_URL: https://app.olyxai.io
   run: |
-    olyx doctor
+    olyx inspect
     olyx trace --metadata '{"environment":"ci","service":"checkout","operation":"deploy.verify"}'
 ```
 

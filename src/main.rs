@@ -65,7 +65,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             .await?;
             print_json(&response)
         }
-        Command::Doctor => print_json(&json!({
+        Command::Inspect => print_json(&json!({
             "base_url": invocation.base_url,
             "api_key_present": invocation.api_key.is_some(),
             "dry_run": invocation.dry_run,
@@ -172,7 +172,7 @@ enum Command {
         public_key_b64: Option<String>,
         public_key_path: Option<String>,
     },
-    Doctor,
+    Inspect,
     Help,
 }
 
@@ -181,7 +181,7 @@ impl Command {
         match args.first().map(String::as_str) {
             None | Some("help") => Ok(Self::Help),
             Some("config") => Ok(Self::Config),
-            Some("doctor") => Ok(Self::Doctor),
+            Some("inspect") => Ok(Self::Inspect),
             Some("trace") => parse_trace(args),
             Some("replay") => parse_replay(args),
             Some("verify-runtime") => parse_verify_runtime(args),
@@ -453,7 +453,7 @@ Usage:
   olyx trace [--metadata JSON] [--local-ref REF] [--base-url URL] [--api-key KEY] [--dry-run]
   olyx replay <trace_id> [--base-url URL] [--api-key KEY] [--dry-run]
   olyx verify-runtime --license PATH --policy PATH --key-id KID (--public-key-b64 KEY | --public-key-file PATH)
-  olyx doctor [--base-url URL] [--api-key KEY] [--dry-run]
+  olyx inspect [--base-url URL] [--api-key KEY] [--dry-run]
 
 Environment:
   OLYX_BASE_URL                Defaults to https://app.olyxai.io
@@ -518,6 +518,16 @@ mod tests {
                 local_ref: Some("opaque:1".into())
             }
         );
+    }
+
+    #[test]
+    fn parses_inspect_and_rejects_doctor_alias() {
+        let invocation = Invocation::parse(vec!["inspect".into()]).unwrap();
+        assert_eq!(invocation.command, Command::Inspect);
+
+        let removed_command = ["doc", "tor"].concat();
+        let error = Invocation::parse(vec![removed_command]).unwrap_err();
+        assert!(error.to_string().contains("unknown command"));
     }
 
     #[tokio::test]
