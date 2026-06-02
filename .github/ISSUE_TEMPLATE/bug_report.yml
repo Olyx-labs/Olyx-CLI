@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible problem in the public Olyx CLI.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please keep it focused and reproducible.
+        Do not include API keys, signed runtime artifacts, customer payloads, or provider secrets.
+  - type: input
+    id: version
+    attributes:
+      label: CLI version
+      placeholder: olyx 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 14 arm64, Ubuntu 22.04 x86_64
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: Include the command shape, but redact secrets.
+      placeholder: olyx trace --metadata '{"source":"checkout"}'
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Links, logs, or screenshots with secrets removed.

@@ -1,0 +1,15 @@
+target/
+.DS_Store
+.env
+.env.*
+*.log
+
+# Local runtime artifacts
+license.olyx.json
+policy-pack.olyx.json
+
+# Downloaded release artifacts
+olyx-*.tar.gz
+olyx-*.tar.gz.sha256
+olyx-*.tar.gz.sig
+olyx-*.tar.gz.pem
