@@ -91,6 +91,23 @@ olyx trace --metadata '{"environment":"production","service":"checkout","operati
 
 `OLYX_BASE_URL` defaults to `https://app.olyxai.io`.
 
+## Product Boundary
+
+Olyx has one public command surface and three operating modes:
+
+| Tier | Runtime path | Telemetry | Replay | Payload storage |
+| :--- | :--- | :--- | :--- | :--- |
+| Free | CLI + Olyx Cloud | Public telemetry | Cloud replay | Stored by Olyx Cloud according to project policy |
+| Pro | CLI + Olyx Cloud | Anonymized telemetry | Cloud replay | Anonymized or policy-bounded cloud storage |
+| Enterprise | CLI + private runtime + optional outbound/on-prem agent | Customer-managed by default | Customer-managed, with optional cloud coordination | Customer environment by default; cloud retention only when explicitly configured |
+
+Across all tiers, provider secrets remain customer-side. Olyx Cloud does not
+need OpenAI, Anthropic, Gemini, Bedrock, Azure, or private-model credentials in
+order to issue config, accept traces, or coordinate replay.
+
+Enterprise private payloads are not stored by Olyx Cloud unless the deployment
+is explicitly configured to allow that retention boundary.
+
 ## Public API Contract
 
 The CLI speaks a narrow JSON protocol over HTTPS:
@@ -144,8 +161,9 @@ committing keys to shell scripts, CI logs, or dotfiles.
 
 ## Metadata-Only Trace
 
-Use `trace --metadata` when Olyx Cloud should receive structured telemetry but
-not the underlying prompt, completion, provider key, or customer payload.
+Use `trace --metadata` when your project mode allows cloud telemetry and you
+want Olyx Cloud to receive structured telemetry but not the underlying prompt,
+completion, provider key, or customer payload.
 
 ```sh
 olyx trace --metadata '{
@@ -160,9 +178,10 @@ olyx trace --metadata '{
 }'
 ```
 
-This is the recommended default for public and pro telemetry. Olyx Cloud sees
-the operational metadata needed for policy, analytics, and replay coordination;
-the sensitive application data remains in your environment.
+This is the recommended default for Pro projects and for Enterprise projects
+that expose cloud-safe operational metadata. Olyx Cloud sees the policy,
+analytics, and replay-coordination fields it needs; sensitive application data
+remains in your environment.
 
 ## Opaque Local References
 
@@ -192,10 +211,11 @@ Replay requests coordinate against an existing trace id or local reference.
 olyx replay trace_01HYW8A4Q9F7G9N2M3P4
 ```
 
-For zero-outbound enterprise deployments, replay execution should happen in the
-customer environment through the private runtime or outbound agent. Olyx Cloud
-can coordinate the replay, but it does not need to store provider secrets,
-prompts, completions, or private model credentials.
+For Enterprise private deployments, replay execution should normally happen in
+the customer environment through the private runtime or outbound agent. Olyx
+Cloud can coordinate replay state and job metadata, but it does not need to
+store provider secrets, prompts, completions, or private model credentials
+unless that deployment is explicitly configured to retain payloads in cloud.
 
 ## Private Runtime Verification
 
@@ -318,7 +338,8 @@ For private deployments, add runtime verification before deploy:
 ## Service Integration Examples
 
 Wrap your provider call with your own local trace capture, then send only
-metadata and an opaque reference to Olyx:
+metadata and an opaque reference to Olyx for Enterprise customer-managed
+telemetry:
 
 ```sh
 TRACE_REF="file:///var/lib/my-app/olyx/traces/trace_$(date +%s).json"
@@ -331,12 +352,12 @@ olyx trace \
     "environment": "production",
     "service": "research-assistant",
     "operation": "answer.generate",
-    "privacy_mode": "zero_outbound",
+    "privacy_mode": "customer_managed",
     "provider": "customer_managed"
   }'
 ```
 
-For pro anonymized telemetry:
+For Pro anonymized telemetry:
 
 ```sh
 olyx trace --metadata '{
@@ -349,7 +370,7 @@ olyx trace --metadata '{
 }'
 ```
 
-For public telemetry:
+For Free public telemetry:
 
 ```sh
 olyx trace --metadata '{
@@ -374,13 +395,19 @@ olyx trace --metadata '{
 
 ## Distribution Boundary
 
-The CLI must not collect or upload provider secrets. Provider keys, private model
-tokens, prompts, completions, and customer trace payloads stay in the customer
-environment.
+The CLI must not collect or upload provider secrets. Provider keys, private
+model tokens, prompts, completions, and customer trace payloads stay in the
+customer environment unless the project's cloud telemetry mode explicitly
+permits bounded payload retention.
 
-Olyx Cloud receives policy/config requests, trace metadata, opaque local
-references, and replay coordination requests. Private enforcement remains in the
-compiled `olyx-core` runtime and, for enterprise deployments, the outbound agent.
+For Free and Pro projects, Olyx Cloud receives the policy/config calls, trace
+data allowed by the project's telemetry mode, and replay coordination traffic.
+
+For Enterprise private deployments, Olyx Cloud still handles project
+configuration and optional replay coordination, but the private runtime owns the
+enforcement path and payload boundary. The outbound/on-prem agent is optional
+in that model and is used when the customer wants a local control-plane and
+dashboard surface inside the private environment.
 
 The public repository intentionally contains only the CLI command surface,
 transport code, and release packaging. `olyx-core` source, policy evaluation
