@@ -103,6 +103,10 @@ Every cloud request sends the project key as `Authorization: Bearer $OLYX_API_KE
 { "error": "message", "code": "machine_code", "request_id": "req_..." }
 ```
 
+CLI output is sanitized before printing. Token-like values, bearer credentials,
+and sensitive JSON keys such as `api_key`, `authorization`, and `secret` are
+redacted in dry-run output and surfaced error messages.
+
 ## Commands
 
 ```sh
