@@ -8,6 +8,7 @@ use std::process;
 const DEFAULT_BASE_URL: &str = "https://app.olyxai.io";
 const MAX_SIGNED_ENVELOPE_FILE_BYTES: u64 = 3 * 1024 * 1024;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const REDACTED: &str = "[REDACTED]";
 
 #[tokio::main]
 async fn main() {
@@ -477,7 +478,7 @@ async fn request_json(
             "method": method,
             "url": format!("{base_url}{path}"),
             "api_key_present": api_key_present(api_key),
-            "body": body
+            "body": body.map(sanitize_json_for_output)
         }));
     }
 
@@ -530,9 +531,10 @@ fn normalize_base_url(raw: &str) -> Result<String, CliError> {
 }
 
 fn print_json(value: &Value) -> Result<(), CliError> {
+    let sanitized = sanitize_json_for_output(value);
     println!(
         "{}",
-        serde_json::to_string_pretty(value).map_err(|e| CliError::message(e.to_string()))?
+        serde_json::to_string_pretty(&sanitized).map_err(|e| CliError::message(e.to_string()))?
     );
     Ok(())
 }
@@ -547,7 +549,8 @@ fn redact_argument(raw: &str) -> String {
 }
 
 fn truncate_for_error(raw: &str) -> String {
-    let trimmed = raw.trim();
+    let trimmed = sanitize_text_for_output(raw);
+    let trimmed = trimmed.trim();
     if trimmed.len() > 500 {
         format!("{}...", trimmed.chars().take(500).collect::<String>())
     } else {
@@ -559,11 +562,18 @@ fn format_api_error(value: &Value) -> String {
     let message = value
         .get("error")
         .and_then(Value::as_str)
-        .or_else(|| value.get("message").and_then(Value::as_str));
-    let code = value.get("code").and_then(Value::as_str);
-    let request_id = value.get("request_id").and_then(Value::as_str);
+        .or_else(|| value.get("message").and_then(Value::as_str))
+        .map(sanitize_text_for_output);
+    let code = value
+        .get("code")
+        .and_then(Value::as_str)
+        .map(sanitize_text_for_output);
+    let request_id = value
+        .get("request_id")
+        .and_then(Value::as_str)
+        .map(sanitize_text_for_output);
 
-    match (message, code, request_id) {
+    match (message.as_deref(), code.as_deref(), request_id.as_deref()) {
         (Some(message), Some(code), Some(request_id)) => {
             format!("{message} ({code}, request_id={request_id})")
         }
@@ -572,6 +582,133 @@ fn format_api_error(value: &Value) -> String {
         (Some(message), None, None) => message.to_string(),
         _ => truncate_for_error(&value.to_string()),
     }
+}
+
+fn sanitize_json_for_output(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| {
+                    let sanitized = if is_sensitive_key(key) {
+                        Value::String(REDACTED.to_string())
+                    } else {
+                        sanitize_json_for_output(value)
+                    };
+                    (key.clone(), sanitized)
+                })
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(values.iter().map(sanitize_json_for_output).collect()),
+        Value::String(text) => Value::String(sanitize_text_for_output(text)),
+        other => other.clone(),
+    }
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+
+    matches!(
+        normalized.as_str(),
+        "api_key"
+            | "access_token"
+            | "refresh_token"
+            | "token"
+            | "secret"
+            | "client_secret"
+            | "authorization"
+            | "password"
+            | "openai_api_key"
+            | "anthropic_api_key"
+            | "gemini_api_key"
+    )
+}
+
+fn sanitize_text_for_output(raw: &str) -> String {
+    let mut value = raw.to_string();
+    value = redact_bearer_token(&value);
+
+    for (prefix, min_suffix_len) in [
+        ("ak_", 6usize),
+        ("sk-", 10usize),
+        ("ghp_", 12usize),
+        ("ghs_", 12usize),
+        ("gho_", 12usize),
+        ("glpat-", 12usize),
+        ("xoxb-", 8usize),
+        ("xoxp-", 8usize),
+        ("xoxs-", 8usize),
+        ("xoxa-", 8usize),
+        ("npm_", 10usize),
+        ("SG.", 10usize),
+        ("AKIA", 12usize),
+        ("ASIA", 12usize),
+    ] {
+        value = redact_prefixed_token(&value, prefix, min_suffix_len);
+    }
+
+    value
+}
+
+fn redact_bearer_token(raw: &str) -> String {
+    let mut output = String::with_capacity(raw.len());
+    let mut cursor = 0;
+
+    while let Some(relative) = raw[cursor..].find("Bearer ") {
+        let start = cursor + relative;
+        let token_start = start + "Bearer ".len();
+        output.push_str(&raw[cursor..token_start]);
+
+        let suffix_len = token_suffix_len(&raw[token_start..]);
+        if suffix_len >= 6 {
+            output.push_str(REDACTED);
+            cursor = token_start + suffix_len;
+        } else {
+            cursor = token_start;
+        }
+    }
+
+    output.push_str(&raw[cursor..]);
+    output
+}
+
+fn redact_prefixed_token(raw: &str, prefix: &str, min_suffix_len: usize) -> String {
+    let mut output = String::with_capacity(raw.len());
+    let mut cursor = 0;
+
+    while let Some(relative) = raw[cursor..].find(prefix) {
+        let start = cursor + relative;
+        let suffix_start = start + prefix.len();
+        output.push_str(&raw[cursor..start]);
+
+        let suffix_len = token_suffix_len(&raw[suffix_start..]);
+        if suffix_len >= min_suffix_len {
+            output.push_str(prefix);
+            output.push_str(REDACTED);
+            cursor = suffix_start + suffix_len;
+        } else {
+            output.push_str(prefix);
+            cursor = suffix_start;
+        }
+    }
+
+    output.push_str(&raw[cursor..]);
+    output
+}
+
+fn token_suffix_len(raw: &str) -> usize {
+    raw.chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+        .map(char::len_utf8)
+        .sum()
 }
 
 fn usage() -> &'static str {
@@ -612,15 +749,16 @@ struct CliError {
 
 impl CliError {
     fn usage(message: impl Into<String>) -> Self {
+        let message = sanitize_text_for_output(&message.into());
         Self {
-            message: format!("{}\n\n{}", message.into(), usage()),
+            message: format!("{message}\n\n{}", usage()),
             exit_code: 2,
         }
     }
 
     fn message(message: impl Into<String>) -> Self {
         Self {
-            message: message.into(),
+            message: sanitize_text_for_output(&message.into()),
             exit_code: 1,
         }
     }
@@ -641,6 +779,22 @@ impl std::error::Error for CliError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fake_olyx_key() -> String {
+        ["ak", "_live_", "1234567890abcdef"].concat()
+    }
+
+    fn fake_openai_key() -> String {
+        ["sk", "-proj-", "1234567890abcdef"].concat()
+    }
+
+    fn fake_slack_token() -> String {
+        ["xox", "b-", "123456789-", "abcdefghij"].concat()
+    }
+
+    fn fake_github_token() -> String {
+        ["gh", "p_", "XaBcDeFgHiJkLmNoPqRsTuVwXyZ12345"].concat()
+    }
 
     #[test]
     fn parses_trace_with_metadata_and_local_ref() {
@@ -780,7 +934,15 @@ mod tests {
 
     #[tokio::test]
     async fn dry_run_returns_request_shape() {
-        let body = json!({ "trace_id": "trace_123" });
+        let olyx_key = fake_olyx_key();
+        let openai_key = fake_openai_key();
+        let slack_token = fake_slack_token();
+        let body = json!({
+            "trace_id": "trace_123",
+            "api_key": olyx_key,
+            "authorization": format!("Bearer {openai_key}"),
+            "notes": slack_token
+        });
         let response = request_json(
             "POST",
             "https://app.olyxai.io",
@@ -796,7 +958,10 @@ mod tests {
         assert_eq!(response["method"], "POST");
         assert_eq!(response["url"], "https://app.olyxai.io/api/v1/replay");
         assert_eq!(response["api_key_present"], false);
-        assert_eq!(response["body"], body);
+        assert_eq!(response["body"]["trace_id"], "trace_123");
+        assert_eq!(response["body"]["api_key"], REDACTED);
+        assert_eq!(response["body"]["authorization"], REDACTED);
+        assert_eq!(response["body"]["notes"], "xoxb-[REDACTED]");
     }
 
     #[test]
@@ -808,5 +973,51 @@ mod tests {
         }));
 
         assert_eq!(message, "Unauthorized (unauthorized, request_id=req_123)");
+    }
+
+    #[test]
+    fn api_error_redacts_secret_values() {
+        let openai_key = fake_openai_key();
+        let olyx_key = fake_olyx_key();
+        let message = format_api_error(&json!({
+            "error": format!("upstream rejected Bearer {openai_key} and {olyx_key}"),
+            "code": "unauthorized"
+        }));
+
+        assert!(!message.contains(&openai_key));
+        assert!(!message.contains(&olyx_key));
+        assert!(message.contains("Bearer [REDACTED]"));
+        assert!(message.contains("ak_[REDACTED]"));
+    }
+
+    #[test]
+    fn sanitizes_sensitive_json_keys_and_token_like_strings() {
+        let olyx_key = fake_olyx_key();
+        let openai_key = fake_openai_key();
+        let github_token = fake_github_token();
+        let value = json!({
+            "api_key": olyx_key,
+            "nested": {
+                "authorization": format!("Bearer {openai_key}"),
+                "note": format!("Use token {github_token} for auth.")
+            }
+        });
+
+        let sanitized = sanitize_json_for_output(&value);
+        assert_eq!(sanitized["api_key"], REDACTED);
+        assert_eq!(sanitized["nested"]["authorization"], REDACTED);
+        assert_eq!(
+            sanitized["nested"]["note"],
+            "Use token ghp_[REDACTED] for auth."
+        );
+    }
+
+    #[test]
+    fn cli_error_message_redacts_token_like_values() {
+        let olyx_key = fake_olyx_key();
+        let error = CliError::message(format!("request failed for {olyx_key}"));
+
+        assert!(!error.to_string().contains(&olyx_key));
+        assert!(error.to_string().contains("ak_[REDACTED]"));
     }
 }
