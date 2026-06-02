@@ -3,6 +3,10 @@
 Command-line client for the Olyx CLI and private-deployment distribution
 channel.
 
+- License: [Apache-2.0](LICENSE)
+- Security: [SECURITY.md](SECURITY.md)
+- Contribution policy: [CONTRIBUTING.md](CONTRIBUTING.md)
+
 `olyx` is intentionally thin. It handles command UX, local file loading,
 diagnostics, and Olyx Cloud transport. Private policy enforcement, license
 verification, signed policy-pack loading, scrubbing, and block decisions live in
@@ -384,3 +388,13 @@ internals, scrubbing logic, block injection logic, signing keys, and license
 issuance logic remain private. Public release binaries are built in CI from the
 public CLI plus the private compiled core and are distributed only as signed,
 checksummed archives.
+
+## Repository Policy
+
+This repository should use issue templates only, with blank issues disabled.
+
+GitHub Discussions should remain disabled for now, and external pull requests
+are closed while the public CLI surface continues to settle.
+
+No release badge is included until the public release workflow has been stable
+in production for a sustained period.

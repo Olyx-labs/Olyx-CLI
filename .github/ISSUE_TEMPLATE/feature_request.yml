@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a public CLI improvement or workflow enhancement.
+title: "[feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please keep requests scoped to the public CLI surface.
+        Private runtime internals, outbound-agent internals, and cloud-side policy systems are not tracked publicly here.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What workflow is blocked or awkward today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed CLI behavior
+      description: Describe the command, flag, or output shape you want.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds or other approaches you evaluated.
