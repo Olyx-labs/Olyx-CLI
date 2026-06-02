@@ -97,8 +97,8 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             )?;
             print_json(&serde_json::to_value(status).map_err(|e| CliError::message(e.to_string()))?)
         }
-        Command::Help => {
-            println!("{}", usage());
+        Command::Help(topic) => {
+            println!("{}", help_text(topic));
             Ok(())
         }
         Command::Version => {
@@ -145,9 +145,15 @@ impl Invocation {
                     );
                 }
                 "--dry-run" => dry_run = true,
-                "-h" | "--help" => {
-                    return Self::for_command(Command::Help, base_url, api_key, dry_run);
+                "-h" | "--help" if positionals.is_empty() => {
+                    return Self::for_command(
+                        Command::Help(HelpTopic::General),
+                        base_url,
+                        api_key,
+                        dry_run,
+                    );
                 }
+                "-h" | "--help" => positionals.push(args[i].clone()),
                 "-V" | "--version" => {
                     return Self::for_command(Command::Version, base_url, api_key, dry_run);
                 }
@@ -204,16 +210,27 @@ enum Command {
         public_key_path: Option<String>,
     },
     Inspect,
-    Help,
+    Help(HelpTopic),
     Version,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum HelpTopic {
+    General,
+    Inspect,
+    Config,
+    Trace,
+    Replay,
+    VerifyRuntime,
 }
 
 impl Command {
     fn parse(args: Vec<String>) -> Result<Self, CliError> {
         match args.first().map(String::as_str) {
-            None | Some("help") => Ok(Self::Help),
-            Some("config") => Ok(Self::Config),
-            Some("inspect") => Ok(Self::Inspect),
+            None => Ok(Self::Help(HelpTopic::General)),
+            Some("help") => parse_help(args),
+            Some("config") => parse_fixed_arity_help(args, HelpTopic::Config, Self::Config),
+            Some("inspect") => parse_fixed_arity_help(args, HelpTopic::Inspect, Self::Inspect),
             Some("trace") => parse_trace(args),
             Some("replay") => parse_replay(args),
             Some("verify-runtime") => parse_verify_runtime(args),
@@ -222,6 +239,41 @@ impl Command {
                 redact_argument(other)
             ))),
         }
+    }
+}
+
+fn parse_help(args: Vec<String>) -> Result<Command, CliError> {
+    match args.as_slice() {
+        [_] => Ok(Command::Help(HelpTopic::General)),
+        [_, topic] => Ok(Command::Help(parse_help_topic(topic)?)),
+        _ => Err(CliError::usage("usage: olyx help [inspect|config|trace|replay|verify-runtime]")),
+    }
+}
+
+fn parse_help_topic(raw: &str) -> Result<HelpTopic, CliError> {
+    match raw {
+        "inspect" => Ok(HelpTopic::Inspect),
+        "config" => Ok(HelpTopic::Config),
+        "trace" => Ok(HelpTopic::Trace),
+        "replay" => Ok(HelpTopic::Replay),
+        "verify-runtime" => Ok(HelpTopic::VerifyRuntime),
+        other => Err(CliError::usage(format!(
+            "unknown help topic: {}",
+            redact_argument(other)
+        ))),
+    }
+}
+
+fn parse_fixed_arity_help(
+    args: Vec<String>,
+    help_topic: HelpTopic,
+    command: Command,
+) -> Result<Command, CliError> {
+    match args.as_slice() {
+        [_] => Ok(command),
+        [_, "--help"] | [_, "-h"] => Ok(Command::Help(help_topic)),
+        [name, ..] => Err(CliError::usage(format!("usage: olyx {name} [--base-url URL] [--api-key KEY] [--dry-run]"))),
+        [] => unreachable!(),
     }
 }
 
@@ -240,6 +292,10 @@ fn api_key_present(api_key: Option<&str>) -> bool {
 }
 
 fn parse_trace(args: Vec<String>) -> Result<Command, CliError> {
+    if matches!(args.as_slice(), [_, "--help"] | [_, "-h"]) {
+        return Ok(Command::Help(HelpTopic::Trace));
+    }
+
     let mut metadata = None;
     let mut local_ref = None;
     let mut i = 1;
@@ -276,6 +332,10 @@ fn parse_trace(args: Vec<String>) -> Result<Command, CliError> {
 }
 
 fn parse_replay(args: Vec<String>) -> Result<Command, CliError> {
+    if matches!(args.as_slice(), [_, "--help"] | [_, "-h"]) {
+        return Ok(Command::Help(HelpTopic::Replay));
+    }
+
     if args.len() != 2 {
         return Err(CliError::usage("usage: olyx replay <trace_id>"));
     }
@@ -286,6 +346,10 @@ fn parse_replay(args: Vec<String>) -> Result<Command, CliError> {
 }
 
 fn parse_verify_runtime(args: Vec<String>) -> Result<Command, CliError> {
+    if matches!(args.as_slice(), [_, "--help"] | [_, "-h"]) {
+        return Ok(Command::Help(HelpTopic::VerifyRuntime));
+    }
+
     let mut license_path = None;
     let mut policy_path = None;
     let mut key_id = None;
@@ -711,11 +775,22 @@ fn token_suffix_len(raw: &str) -> usize {
         .sum()
 }
 
-fn usage() -> &'static str {
-    r#"olyx CLI
+fn help_text(topic: HelpTopic) -> &'static str {
+    match topic {
+        HelpTopic::General => GENERAL_HELP,
+        HelpTopic::Inspect => INSPECT_HELP,
+        HelpTopic::Config => CONFIG_HELP,
+        HelpTopic::Trace => TRACE_HELP,
+        HelpTopic::Replay => REPLAY_HELP,
+        HelpTopic::VerifyRuntime => VERIFY_RUNTIME_HELP,
+    }
+}
+
+const GENERAL_HELP: &str = r#"olyx CLI
 
 Usage:
   olyx help
+  olyx help <inspect|config|trace|replay|verify-runtime>
   olyx --version
   olyx inspect [--base-url URL] [--api-key KEY] [--dry-run]
   olyx config [--base-url URL] [--api-key KEY] [--dry-run]
@@ -738,8 +813,51 @@ Environment:
   OLYX_POLICY_KEY_ID           Expected Olyx signing key id
   OLYX_POLICY_PUBLIC_KEY_B64   Ed25519 public key, base64url or standard base64
   OLYX_POLICY_PUBLIC_KEY_PATH  File containing the public key
-"#
-}
+"#;
+
+const INSPECT_HELP: &str = r#"olyx inspect
+
+Usage:
+  olyx inspect [--base-url URL] [--api-key KEY] [--dry-run]
+
+Print local CLI and private-runtime environment status without making network
+requests.
+"#;
+
+const CONFIG_HELP: &str = r#"olyx config
+
+Usage:
+  olyx config [--base-url URL] [--api-key KEY] [--dry-run]
+
+Fetch the project configuration contract from Olyx Cloud, including distribution,
+guardrails, and replay mode.
+"#;
+
+const TRACE_HELP: &str = r#"olyx trace
+
+Usage:
+  olyx trace [--metadata JSON] [--local-ref REF] [--base-url URL] [--api-key KEY] [--dry-run]
+
+Create a trace envelope in Olyx Cloud using metadata only or an opaque local
+reference.
+"#;
+
+const REPLAY_HELP: &str = r#"olyx replay
+
+Usage:
+  olyx replay <trace_id> [--base-url URL] [--api-key KEY] [--dry-run]
+
+Queue replay work for an existing trace id.
+"#;
+
+const VERIFY_RUNTIME_HELP: &str = r#"olyx verify-runtime
+
+Usage:
+  olyx verify-runtime --license PATH --policy PATH --key-id KID (--public-key-b64 KEY | --public-key-file PATH)
+
+Verify the signed runtime license and policy-pack envelopes required to activate
+the private compiled core.
+"#;
 
 #[derive(Debug)]
 struct CliError {
@@ -751,7 +869,7 @@ impl CliError {
     fn usage(message: impl Into<String>) -> Self {
         let message = sanitize_text_for_output(&message.into());
         Self {
-            message: format!("{message}\n\n{}", usage()),
+            message: format!("{message}\n\n{GENERAL_HELP}"),
             exit_code: 2,
         }
     }
