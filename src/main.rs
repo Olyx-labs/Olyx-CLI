@@ -177,7 +177,7 @@ impl Invocation {
         api_key: Option<String>,
         dry_run: bool,
     ) -> Result<Self, CliError> {
-        let base_url = if matches!(command, Command::Help | Command::Version) {
+        let base_url = if matches!(command, Command::Help(_) | Command::Version) {
             DEFAULT_BASE_URL.to_string()
         } else {
             normalize_base_url(&base_url)?
@@ -246,7 +246,9 @@ fn parse_help(args: Vec<String>) -> Result<Command, CliError> {
     match args.as_slice() {
         [_] => Ok(Command::Help(HelpTopic::General)),
         [_, topic] => Ok(Command::Help(parse_help_topic(topic)?)),
-        _ => Err(CliError::usage("usage: olyx help [inspect|config|trace|replay|verify-runtime]")),
+        _ => Err(CliError::usage(
+            "usage: olyx help [inspect|config|trace|replay|verify-runtime]",
+        )),
     }
 }
 
@@ -269,11 +271,20 @@ fn parse_fixed_arity_help(
     help_topic: HelpTopic,
     command: Command,
 ) -> Result<Command, CliError> {
-    match args.as_slice() {
-        [_] => Ok(command),
-        [_, "--help"] | [_, "-h"] => Ok(Command::Help(help_topic)),
-        [name, ..] => Err(CliError::usage(format!("usage: olyx {name} [--base-url URL] [--api-key KEY] [--dry-run]"))),
-        [] => unreachable!(),
+    if args.len() == 1 {
+        Ok(command)
+    } else if args.len() == 2
+        && args
+            .get(1)
+            .is_some_and(|arg| arg == "--help" || arg == "-h")
+    {
+        Ok(Command::Help(help_topic))
+    } else if let Some(name) = args.first() {
+        Err(CliError::usage(format!(
+            "usage: olyx {name} [--base-url URL] [--api-key KEY] [--dry-run]"
+        )))
+    } else {
+        unreachable!()
     }
 }
 
@@ -292,7 +303,11 @@ fn api_key_present(api_key: Option<&str>) -> bool {
 }
 
 fn parse_trace(args: Vec<String>) -> Result<Command, CliError> {
-    if matches!(args.as_slice(), [_, "--help"] | [_, "-h"]) {
+    if args.len() == 2
+        && args
+            .get(1)
+            .is_some_and(|arg| arg == "--help" || arg == "-h")
+    {
         return Ok(Command::Help(HelpTopic::Trace));
     }
 
@@ -332,7 +347,11 @@ fn parse_trace(args: Vec<String>) -> Result<Command, CliError> {
 }
 
 fn parse_replay(args: Vec<String>) -> Result<Command, CliError> {
-    if matches!(args.as_slice(), [_, "--help"] | [_, "-h"]) {
+    if args.len() == 2
+        && args
+            .get(1)
+            .is_some_and(|arg| arg == "--help" || arg == "-h")
+    {
         return Ok(Command::Help(HelpTopic::Replay));
     }
 
@@ -346,7 +365,11 @@ fn parse_replay(args: Vec<String>) -> Result<Command, CliError> {
 }
 
 fn parse_verify_runtime(args: Vec<String>) -> Result<Command, CliError> {
-    if matches!(args.as_slice(), [_, "--help"] | [_, "-h"]) {
+    if args.len() == 2
+        && args
+            .get(1)
+            .is_some_and(|arg| arg == "--help" || arg == "-h")
+    {
         return Ok(Command::Help(HelpTopic::VerifyRuntime));
     }
 
@@ -897,6 +920,15 @@ impl std::error::Error for CliError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use chrono::{Duration, Utc};
+    use ed25519_dalek::{Signer, SigningKey};
+    use olyx_core::{
+        EnvelopeHeader, LicensePayload, LicensePlan, PolicyEffect, PolicyPackPayload, PolicyRule,
+        RuntimeMode, SignedEnvelope,
+    };
+    use std::collections::BTreeMap;
 
     fn fake_olyx_key() -> String {
         ["ak", "_live_", "1234567890abcdef"].concat()
@@ -912,6 +944,79 @@ mod tests {
 
     fn fake_github_token() -> String {
         ["gh", "p_", "XaBcDeFgHiJkLmNoPqRsTuVwXyZ12345"].concat()
+    }
+
+    fn test_signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[7u8; 32])
+    }
+
+    fn sign_envelope<T: serde::Serialize>(typ: &str, payload: &T) -> SignedEnvelope {
+        let header = EnvelopeHeader {
+            alg: "EdDSA".to_string(),
+            kid: "olyx-test-key".to_string(),
+            typ: typ.to_string(),
+        };
+        let protected = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(payload).unwrap());
+        let signing_input = format!("{protected}.{payload}");
+        let signature = test_signing_key().sign(signing_input.as_bytes());
+
+        SignedEnvelope {
+            protected,
+            payload,
+            signature: URL_SAFE_NO_PAD.encode(signature.to_bytes()),
+        }
+    }
+
+    fn valid_license(runtime_modes: Vec<RuntimeMode>) -> LicensePayload {
+        LicensePayload {
+            customer_id: "cus_demo".to_string(),
+            project_id: "proj_demo".to_string(),
+            plan: LicensePlan::Enterprise,
+            features: vec!["private_models".to_string(), "policy_packs".to_string()],
+            runtime_modes,
+            issued_at: Utc::now() - Duration::minutes(5),
+            not_before: Utc::now() - Duration::minutes(5),
+            expires_at: Utc::now() + Duration::days(30),
+        }
+    }
+
+    fn valid_policy() -> PolicyPackPayload {
+        PolicyPackPayload {
+            policy_id: "pol_demo".to_string(),
+            version: "2026.06.02".to_string(),
+            project_id: "proj_demo".to_string(),
+            issued_at: Utc::now() - Duration::minutes(5),
+            not_before: Utc::now() - Duration::minutes(5),
+            expires_at: Utc::now() + Duration::days(7),
+            runtime_failover: BTreeMap::from([(
+                "preferred_runtime".to_string(),
+                Value::String("cloud".to_string()),
+            )]),
+            guardrails: BTreeMap::from([(
+                "max_input_length".to_string(),
+                Value::Number(serde_json::Number::from(10_000)),
+            )]),
+            rules: vec![PolicyRule {
+                id: "block-secrets".to_string(),
+                effect: PolicyEffect::Block,
+                selectors: BTreeMap::new(),
+                config: BTreeMap::new(),
+            }],
+        }
+    }
+
+    fn write_temp_file(prefix: &str, content: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "{prefix}-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, content).unwrap();
+        path
     }
 
     #[test]
@@ -976,10 +1081,53 @@ mod tests {
     #[test]
     fn parses_help_and_version_without_api_key() {
         let help = Invocation::parse(vec!["--help".into()]).unwrap();
-        assert_eq!(help.command, Command::Help);
+        assert_eq!(help.command, Command::Help(HelpTopic::General));
 
         let version = Invocation::parse(vec!["--version".into()]).unwrap();
         assert_eq!(version.command, Command::Version);
+    }
+
+    #[test]
+    fn parses_command_help_topics() {
+        assert_eq!(
+            Invocation::parse(vec!["config".into(), "--help".into()])
+                .unwrap()
+                .command,
+            Command::Help(HelpTopic::Config)
+        );
+        assert_eq!(
+            Invocation::parse(vec!["inspect".into(), "--help".into()])
+                .unwrap()
+                .command,
+            Command::Help(HelpTopic::Inspect)
+        );
+        assert_eq!(
+            Invocation::parse(vec!["trace".into(), "--help".into()])
+                .unwrap()
+                .command,
+            Command::Help(HelpTopic::Trace)
+        );
+        assert_eq!(
+            Invocation::parse(vec!["replay".into(), "--help".into()])
+                .unwrap()
+                .command,
+            Command::Help(HelpTopic::Replay)
+        );
+        assert_eq!(
+            Invocation::parse(vec!["verify-runtime".into(), "--help".into()])
+                .unwrap()
+                .command,
+            Command::Help(HelpTopic::VerifyRuntime)
+        );
+    }
+
+    #[test]
+    fn fixed_arity_commands_reject_extra_arguments() {
+        let config_error = Invocation::parse(vec!["config".into(), "extra".into()]).unwrap_err();
+        assert!(config_error.to_string().contains("usage: olyx config"));
+
+        let inspect_error = Invocation::parse(vec!["inspect".into(), "extra".into()]).unwrap_err();
+        assert!(inspect_error.to_string().contains("usage: olyx inspect"));
     }
 
     #[test]
@@ -1082,6 +1230,26 @@ mod tests {
         assert_eq!(response["body"]["notes"], "xoxb-[REDACTED]");
     }
 
+    #[tokio::test]
+    async fn config_dry_run_returns_get_shape_without_body() {
+        let response = request_json(
+            "GET",
+            "https://app.olyxai.io",
+            "/api/v1/sdk/config",
+            None,
+            None,
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response["dry_run"], true);
+        assert_eq!(response["method"], "GET");
+        assert_eq!(response["url"], "https://app.olyxai.io/api/v1/sdk/config");
+        assert_eq!(response["api_key_present"], false);
+        assert_eq!(response["body"], Value::Null);
+    }
+
     #[test]
     fn formats_public_api_error_shape() {
         let message = format_api_error(&json!({
@@ -1137,5 +1305,99 @@ mod tests {
 
         assert!(!error.to_string().contains(&olyx_key));
         assert!(error.to_string().contains("ak_[REDACTED]"));
+    }
+
+    #[test]
+    fn verify_runtime_accepts_valid_signed_artifacts() {
+        let license_path = write_temp_file(
+            "olyx-cli-license",
+            &serde_json::to_string(&sign_envelope(
+                "OLYX-LICENSE",
+                &valid_license(vec![RuntimeMode::Cli, RuntimeMode::Edge]),
+            ))
+            .unwrap(),
+        );
+        let policy_path = write_temp_file(
+            "olyx-cli-policy",
+            &serde_json::to_string(&sign_envelope("OLYX-POLICY-PACK", &valid_policy())).unwrap(),
+        );
+
+        let status = verify_runtime(
+            Some(license_path.to_str().unwrap()),
+            Some(policy_path.to_str().unwrap()),
+            Some("olyx-test-key"),
+            Some(&URL_SAFE_NO_PAD.encode(test_signing_key().verifying_key().to_bytes())),
+            None,
+        )
+        .unwrap();
+
+        assert!(status.active);
+        assert_eq!(status.project_id, "proj_demo");
+        assert_eq!(status.policy_version, "2026.06.02");
+
+        let _ = std::fs::remove_file(license_path);
+        let _ = std::fs::remove_file(policy_path);
+    }
+
+    #[test]
+    fn verify_runtime_rejects_license_without_cli_mode() {
+        let license_path = write_temp_file(
+            "olyx-cli-license",
+            &serde_json::to_string(&sign_envelope(
+                "OLYX-LICENSE",
+                &valid_license(vec![RuntimeMode::Edge]),
+            ))
+            .unwrap(),
+        );
+        let policy_path = write_temp_file(
+            "olyx-cli-policy",
+            &serde_json::to_string(&sign_envelope("OLYX-POLICY-PACK", &valid_policy())).unwrap(),
+        );
+
+        let error = verify_runtime(
+            Some(license_path.to_str().unwrap()),
+            Some(policy_path.to_str().unwrap()),
+            Some("olyx-test-key"),
+            Some(&URL_SAFE_NO_PAD.encode(test_signing_key().verifying_key().to_bytes())),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("runtime verification failed"));
+
+        let _ = std::fs::remove_file(license_path);
+        let _ = std::fs::remove_file(policy_path);
+    }
+
+    #[test]
+    fn help_output_snapshots_are_stable() {
+        assert_eq!(help_text(HelpTopic::General), GENERAL_HELP);
+        assert_eq!(help_text(HelpTopic::Inspect), INSPECT_HELP);
+        assert_eq!(help_text(HelpTopic::Config), CONFIG_HELP);
+        assert_eq!(help_text(HelpTopic::Trace), TRACE_HELP);
+        assert_eq!(help_text(HelpTopic::Replay), REPLAY_HELP);
+        assert_eq!(help_text(HelpTopic::VerifyRuntime), VERIFY_RUNTIME_HELP);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OLYX_SMOKE_API_KEY and live network access"]
+    async fn smoke_config_against_live_control_plane() {
+        let api_key = std::env::var("OLYX_SMOKE_API_KEY")
+            .expect("set OLYX_SMOKE_API_KEY to a scoped smoke-test key");
+        let base_url =
+            std::env::var("OLYX_SMOKE_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
+
+        let response = request_json(
+            "GET",
+            &base_url,
+            "/api/v1/sdk/config",
+            Some(&api_key),
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(response.get("distribution").is_some());
     }
 }
