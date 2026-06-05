@@ -99,13 +99,11 @@ olyx trace --metadata '{"environment":"production","service":"checkout","operati
 
 Olyx has one public command surface and three operating modes:
 
-| Tier | Runtime path | Telemetry | Replay | Payload storage |
-| :--- | :--- | :--- | :--- | :--- |
-| Free | CLI + Olyx Cloud | Public telemetry | Cloud replay | Stored by Olyx Cloud according to project policy |
-| Pro | CLI + Olyx Cloud | Anonymized telemetry | Cloud replay | Anonymized or policy-bounded cloud storage |
-| Enterprise | CLI + private runtime + optional outbound/on-prem agent | Customer-managed by default | Customer-managed, with optional cloud coordination | Customer environment by default; cloud retention only when explicitly configured |
+- cloud telemetry and cloud replay for standard hosted usage
+- anonymized cloud telemetry for privacy-preserving hosted usage
+- Enterprise private deployments with optional outbound/on-prem agent and customer-managed replay
 
-Across all tiers, provider secrets remain customer-side. Olyx Cloud does not
+Across all modes, provider secrets remain customer-side. Olyx Cloud does not
 need OpenAI, Anthropic, Gemini, Bedrock, Azure, or private-model credentials in
 order to issue config, accept traces, or coordinate replay.
 
@@ -178,14 +176,11 @@ olyx trace --metadata '{
   "model": "gpt-4.1-mini",
   "policy_version": "2026.05.27",
   "request_id": "req_01HYW7W1R3H8",
-  "tenant_tier": "enterprise"
+  "distribution_channel": "agent"
 }'
 ```
 
-This is the recommended default for Pro projects and for Enterprise projects
-that expose cloud-safe operational metadata. Olyx Cloud sees the policy,
-analytics, and replay-coordination fields it needs; sensitive application data
-remains in your environment.
+This is the recommended default for cloud projects that expose cloud-safe operational metadata and for Enterprise private deployments that share only bounded metadata. Olyx Cloud sees the policy, analytics, and replay-coordination fields it needs; sensitive application data remains in your environment.
 
 ## Opaque Local References
 
@@ -361,7 +356,7 @@ olyx trace \
   }'
 ```
 
-For Pro anonymized telemetry:
+For anonymized cloud telemetry:
 
 ```sh
 olyx trace --metadata '{
@@ -374,7 +369,7 @@ olyx trace --metadata '{
 }'
 ```
 
-For Free public telemetry:
+For public cloud telemetry:
 
 ```sh
 olyx trace --metadata '{
@@ -404,7 +399,7 @@ model tokens, prompts, completions, and customer trace payloads stay in the
 customer environment unless the project's cloud telemetry mode explicitly
 permits bounded payload retention.
 
-For Free and Pro projects, Olyx Cloud receives the policy/config calls, trace
+For cloud projects, Olyx Cloud receives the policy/config calls, trace
 data allowed by the project's telemetry mode, and replay coordination traffic.
 
 For Enterprise private deployments, Olyx Cloud still handles project
