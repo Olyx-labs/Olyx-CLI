@@ -24,7 +24,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout CLI
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: release-workspace/olyx-cli
           persist-credentials: false
@@ -56,7 +56,7 @@ jobs:
           fi
 
       - name: Checkout private core
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ vars.OLYX_CORE_REPOSITORY }}
           token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
@@ -130,13 +130,13 @@ jobs:
 
     steps:
       - name: Checkout CLI
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: release-workspace/olyx-cli
           persist-credentials: false
 
       - name: Checkout private core
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ vars.OLYX_CORE_REPOSITORY }}
           token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
