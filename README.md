@@ -21,12 +21,12 @@ macOS Apple Silicon:
 
 ```sh
 version="v0.1.0"
-asset="olyx-${version}-darwin-aarch64.tar.gz"
+asset="olyx-${version}-aarch64-apple-darwin.tar.gz"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
 shasum -a 256 -c "${asset}.sha256"
 tar -xzf "${asset}"
-sudo install -m 0755 "olyx-${version}-darwin-aarch64/olyx" /usr/local/bin/olyx
+sudo install -m 0755 "olyx-${version}-aarch64-apple-darwin/olyx" /usr/local/bin/olyx
 olyx --version
 ```
 
@@ -34,12 +34,12 @@ macOS Intel:
 
 ```sh
 version="v0.1.0"
-asset="olyx-${version}-darwin-x86_64.tar.gz"
+asset="olyx-${version}-x86_64-apple-darwin.tar.gz"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
 shasum -a 256 -c "${asset}.sha256"
 tar -xzf "${asset}"
-sudo install -m 0755 "olyx-${version}-darwin-x86_64/olyx" /usr/local/bin/olyx
+sudo install -m 0755 "olyx-${version}-x86_64-apple-darwin/olyx" /usr/local/bin/olyx
 olyx --version
 ```
 
@@ -47,16 +47,17 @@ Linux x86_64:
 
 ```sh
 version="v0.1.0"
-asset="olyx-${version}-linux-x86_64.tar.gz"
+asset="olyx-${version}-x86_64-unknown-linux-gnu.tar.gz"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
 sha256sum -c "${asset}.sha256" || shasum -a 256 -c "${asset}.sha256"
 tar -xzf "${asset}"
-sudo install -m 0755 "olyx-${version}-linux-x86_64/olyx" /usr/local/bin/olyx
+sudo install -m 0755 "olyx-${version}-x86_64-unknown-linux-gnu/olyx" /usr/local/bin/olyx
 olyx --version
 ```
 
-Each release also includes Sigstore signature and certificate files:
+Each release also includes Sigstore signature and certificate files, plus a
+release-wide `SHA256SUMS.txt` manifest:
 
 ```sh
 cosign verify-blob \
@@ -75,8 +76,11 @@ cargo build -p olyx-cli --bin olyx --release
 ```
 
 Release binaries are published through GitHub Releases. The release workflow
-builds the public CLI against the private compiled core in CI and uploads
-versioned archives, SHA-256 checksums, and Sigstore signatures.
+builds the public CLI against the private compiled core in CI, verifies the
+tag matches the crate version, smoke-tests the built binary, verifies Sigstore
+provenance before publishing, and uploads target-triple archives with
+per-archive SHA-256 checksums, a release-wide `SHA256SUMS.txt`, and Sigstore
+signatures.
 
 ## Quickstart
 

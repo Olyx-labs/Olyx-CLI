@@ -29,6 +29,32 @@ jobs:
           path: release-workspace/olyx-cli
           persist-credentials: false
 
+      - name: Validate release configuration
+        working-directory: release-workspace/olyx-cli
+        shell: bash
+        env:
+          OLYX_CORE_REPOSITORY: ${{ vars.OLYX_CORE_REPOSITORY }}
+          OLYX_CORE_REPO_TOKEN: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [[ -z "${version}" ]]; then
+            echo "could not resolve CLI version from Cargo.toml" >&2
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml version v${version}" >&2
+            exit 1
+          fi
+          if [[ -z "${OLYX_CORE_REPOSITORY}" ]]; then
+            echo "OLYX_CORE_REPOSITORY must be configured as a GitHub Actions variable" >&2
+            exit 1
+          fi
+          if [[ -z "${OLYX_CORE_REPO_TOKEN}" ]]; then
+            echo "OLYX_CORE_REPO_TOKEN must be configured as a GitHub Actions secret" >&2
+            exit 1
+          fi
+
       - name: Checkout private core
         uses: actions/checkout@v4
         with:
@@ -78,14 +104,14 @@ jobs:
 
       - name: Clippy
         working-directory: release-workspace
-        run: cargo clippy -p olyx-cli --all-targets -- -D warnings
+        run: cargo clippy --locked -p olyx-cli --all-targets -- -D warnings
 
       - name: Test
         working-directory: release-workspace
-        run: cargo test -p olyx-cli -p olyx-core
+        run: cargo test --locked -p olyx-cli -p olyx-core
 
   build:
-    name: Build ${{ matrix.asset_suffix }}
+    name: Build ${{ matrix.target }}
     needs: quality
     runs-on: ${{ matrix.os }}
     permissions:
@@ -97,13 +123,10 @@ jobs:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            asset_suffix: linux-x86_64
           - os: macos-13
             target: x86_64-apple-darwin
-            asset_suffix: darwin-x86_64
           - os: macos-14
             target: aarch64-apple-darwin
-            asset_suffix: darwin-aarch64
 
     steps:
       - name: Checkout CLI
@@ -156,7 +179,7 @@ jobs:
           workspaces: release-workspace
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@v4.1.0
 
       - name: Validate release tag
         shell: bash
@@ -169,7 +192,18 @@ jobs:
 
       - name: Build release binary
         working-directory: release-workspace
-        run: cargo build -p olyx-cli --bin olyx --release --target ${{ matrix.target }}
+        run: cargo build --locked -p olyx-cli --bin olyx --release --target ${{ matrix.target }}
+
+      - name: Smoke test release binary
+        working-directory: release-workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.target }}/release/olyx"
+          "${binary}" --version | grep -E '^olyx [0-9]+\.[0-9]+\.[0-9]+$'
+          "${binary}" help >/dev/null
+          "${binary}" help trace >/dev/null
+          "${binary}" inspect >/dev/null
 
       - name: Prepare signed artifact
         working-directory: release-workspace
@@ -177,7 +211,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME}"
-          asset="olyx-${version}-${{ matrix.asset_suffix }}"
+          asset="olyx-${version}-${{ matrix.target }}"
           mkdir -p "dist/${asset}"
           cp "target/${{ matrix.target }}/release/olyx" "dist/${asset}/olyx"
           chmod 0755 "dist/${asset}/olyx"
@@ -211,14 +245,14 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: olyx-${{ github.ref_name }}-${{ matrix.asset_suffix }}
+          name: olyx-${{ github.ref_name }}-${{ matrix.target }}
           if-no-files-found: error
           retention-days: 7
           path: |
-            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.asset_suffix }}.tar.gz
-            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.asset_suffix }}.tar.gz.sha256
-            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.asset_suffix }}.tar.gz.sig
-            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.asset_suffix }}.tar.gz.pem
+            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256
+            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sig
+            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.pem
 
   release:
     name: Publish GitHub Release
@@ -228,19 +262,22 @@ jobs:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.1.0
 
       - name: Verify release files
         shell: bash
         run: |
           set -euo pipefail
           expected=(
-            "olyx-${GITHUB_REF_NAME}-linux-x86_64.tar.gz"
-            "olyx-${GITHUB_REF_NAME}-darwin-x86_64.tar.gz"
-            "olyx-${GITHUB_REF_NAME}-darwin-aarch64.tar.gz"
+            "olyx-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz"
+            "olyx-${GITHUB_REF_NAME}-x86_64-apple-darwin.tar.gz"
+            "olyx-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz"
           )
           for file in "${expected[@]}"; do
             test -s "dist/${file}"
@@ -248,23 +285,72 @@ jobs:
             test -s "dist/${file}.sig"
             test -s "dist/${file}.pem"
             shasum -a 256 -c "dist/${file}.sha256"
+            cosign verify-blob \
+              --certificate "dist/${file}.pem" \
+              --signature "dist/${file}.sig" \
+              --certificate-identity-regexp 'https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "dist/${file}"
           done
+          (
+            cd dist
+            shasum -a 256 *.tar.gz > SHA256SUMS.txt
+          )
+
+      - name: Build release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          cat > dist/RELEASE_NOTES.md <<EOF
+          ## Install
+
+          Download the archive for your platform, verify its checksum, then install the \`olyx\` binary.
+
+          - \`olyx-\${version}-x86_64-unknown-linux-gnu.tar.gz\`
+          - \`olyx-\${version}-x86_64-apple-darwin.tar.gz\`
+          - \`olyx-\${version}-aarch64-apple-darwin.tar.gz\`
+
+          Each archive ships with:
+
+          - a per-archive \`.sha256\` checksum file
+          - a Sigstore \`.sig\` signature
+          - a Sigstore \`.pem\` certificate
+          - a release-wide \`SHA256SUMS.txt\` manifest
+
+          Verify a downloaded archive:
+
+          \`\`\`sh
+          asset="olyx-\${version}-x86_64-unknown-linux-gnu.tar.gz"
+          shasum -a 256 -c "\${asset}.sha256"
+          cosign verify-blob \\
+            --certificate "\${asset}.pem" \\
+            --signature "\${asset}.sig" \\
+            --certificate-identity-regexp 'https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+' \\
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
+            "\${asset}"
+          tar -xzf "\${asset}"
+          install -m 0755 "olyx-\${version}-x86_64-unknown-linux-gnu/olyx" /usr/local/bin/olyx
+          \`\`\`
+          EOF
 
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          body_path: dist/RELEASE_NOTES.md
           fail_on_unmatched_files: true
           files: |
-            dist/olyx-${{ github.ref_name }}-linux-x86_64.tar.gz
-            dist/olyx-${{ github.ref_name }}-linux-x86_64.tar.gz.sha256
-            dist/olyx-${{ github.ref_name }}-linux-x86_64.tar.gz.sig
-            dist/olyx-${{ github.ref_name }}-linux-x86_64.tar.gz.pem
-            dist/olyx-${{ github.ref_name }}-darwin-x86_64.tar.gz
-            dist/olyx-${{ github.ref_name }}-darwin-x86_64.tar.gz.sha256
-            dist/olyx-${{ github.ref_name }}-darwin-x86_64.tar.gz.sig
-            dist/olyx-${{ github.ref_name }}-darwin-x86_64.tar.gz.pem
-            dist/olyx-${{ github.ref_name }}-darwin-aarch64.tar.gz
-            dist/olyx-${{ github.ref_name }}-darwin-aarch64.tar.gz.sha256
-            dist/olyx-${{ github.ref_name }}-darwin-aarch64.tar.gz.sig
-            dist/olyx-${{ github.ref_name }}-darwin-aarch64.tar.gz.pem
+            dist/SHA256SUMS.txt
+            dist/olyx-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+            dist/olyx-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sha256
+            dist/olyx-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sig
+            dist/olyx-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.pem
+            dist/olyx-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz
+            dist/olyx-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz.sha256
+            dist/olyx-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz.sig
+            dist/olyx-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz.pem
+            dist/olyx-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz
+            dist/olyx-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz.sha256
+            dist/olyx-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz.sig
+            dist/olyx-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz.pem
