@@ -40,7 +40,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout CLI
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: release-workspace/olyx-cli
           persist-credentials: false
@@ -78,8 +78,24 @@ jobs:
             exit 1
           fi
 
+      - name: Verify private core credentials
+        shell: bash
+        env:
+          OLYX_CORE_REPOSITORY: ${{ vars.OLYX_CORE_REPOSITORY }}
+          OLYX_CORE_REPO_TOKEN: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo_api="https://api.github.com/repos/${OLYX_CORE_REPOSITORY}"
+          response_file="$(mktemp)"
+          http_status="$(curl -sS -o "${response_file}" -w '%{http_code}'             -H "Authorization: Bearer ${OLYX_CORE_REPO_TOKEN}"             -H "Accept: application/vnd.github+json"             "${repo_api}")"
+          if [[ "${http_status}" != "200" ]]; then
+            echo "OLYX_CORE_REPO_TOKEN cannot access ${OLYX_CORE_REPOSITORY}. Provide a valid token with read access to the private core repo." >&2
+            cat "${response_file}" >&2
+            exit 1
+          fi
+          rm -f "${response_file}"
       - name: Checkout private core
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ vars.OLYX_CORE_REPOSITORY }}
           token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
@@ -154,13 +170,29 @@ jobs:
 
     steps:
       - name: Checkout CLI
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: release-workspace/olyx-cli
           persist-credentials: false
 
+      - name: Verify private core credentials
+        shell: bash
+        env:
+          OLYX_CORE_REPOSITORY: ${{ vars.OLYX_CORE_REPOSITORY }}
+          OLYX_CORE_REPO_TOKEN: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo_api="https://api.github.com/repos/${OLYX_CORE_REPOSITORY}"
+          response_file="$(mktemp)"
+          http_status="$(curl -sS -o "${response_file}" -w '%{http_code}'             -H "Authorization: Bearer ${OLYX_CORE_REPO_TOKEN}"             -H "Accept: application/vnd.github+json"             "${repo_api}")"
+          if [[ "${http_status}" != "200" ]]; then
+            echo "OLYX_CORE_REPO_TOKEN cannot access ${OLYX_CORE_REPOSITORY}. Provide a valid token with read access to the private core repo." >&2
+            cat "${response_file}" >&2
+            exit 1
+          fi
+          rm -f "${response_file}"
       - name: Checkout private core
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ vars.OLYX_CORE_REPOSITORY }}
           token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
