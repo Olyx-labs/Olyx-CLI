@@ -4,6 +4,18 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag name to use for the rehearsal artifact set"
+        required: true
+        default: "v0.1.0-rehearsal"
+        type: string
+      rehearsal:
+        description: "Skip GitHub Release publication and only run the release rehearsal"
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -15,6 +27,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_RELEASE_DEBUG: 0
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  REHEARSAL: ${{ github.event_name == 'workflow_dispatch' && inputs.rehearsal || false }}
+  OIDC_IDENTITY_REGEX: ${{ github.event_name == 'workflow_dispatch' && format('https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@{0}', github.ref) || 'https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' }}
   RUSTFLAGS: -D warnings
 
 jobs:
@@ -43,9 +58,16 @@ jobs:
             echo "could not resolve CLI version from Cargo.toml" >&2
             exit 1
           fi
-          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
-            echo "tag ${GITHUB_REF_NAME} does not match Cargo.toml version v${version}" >&2
-            exit 1
+          if [[ "${REHEARSAL}" == "true" ]]; then
+            if [[ ! "${RELEASE_TAG}" =~ ^v${version}(-rehearsal)?$ ]]; then
+              echo "rehearsal tag ${RELEASE_TAG} must match v${version} or v${version}-rehearsal" >&2
+              exit 1
+            fi
+          else
+            if [[ "${RELEASE_TAG}" != "v${version}" ]]; then
+              echo "tag ${RELEASE_TAG} does not match Cargo.toml version v${version}" >&2
+              exit 1
+            fi
           fi
           if [[ -z "${OLYX_CORE_REPOSITORY}" ]]; then
             echo "OLYX_CORE_REPOSITORY must be configured as a GitHub Actions variable" >&2
@@ -188,9 +210,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "release tags must match vMAJOR.MINOR.PATCH" >&2
-            exit 1
+          if [[ "${REHEARSAL}" == "true" ]]; then
+            if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rehearsal)?$ ]]; then
+              echo "rehearsal tags must match vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rehearsal" >&2
+              exit 1
+            fi
+          else
+            if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "release tags must match vMAJOR.MINOR.PATCH" >&2
+              exit 1
+            fi
           fi
 
       - name: Build release binary
@@ -213,7 +242,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME}"
+          version="${RELEASE_TAG}"
           asset="olyx-${version}-${{ matrix.target }}"
           mkdir -p "dist/${asset}"
           cp "target/${{ matrix.target }}/release/olyx" "dist/${asset}/olyx"
@@ -229,7 +258,7 @@ jobs:
             cosign verify-blob \
               --certificate ${asset}.tar.gz.pem \
               --signature ${asset}.tar.gz.sig \
-              --certificate-identity-regexp 'https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+' \
+              --certificate-identity-regexp "${OIDC_IDENTITY_REGEX}" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               ${asset}.tar.gz
           EOF
@@ -248,14 +277,14 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: olyx-${{ github.ref_name }}-${{ matrix.target }}
+          name: olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}
           if-no-files-found: error
           retention-days: 7
           path: |
-            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
-            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256
-            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sig
-            release-workspace/dist/olyx-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.pem
+            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz
+            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz.sha256
+            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz.sig
+            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz.pem
 
   release:
     name: Publish GitHub Release
@@ -278,9 +307,9 @@ jobs:
         run: |
           set -euo pipefail
           expected=(
-            "olyx-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz"
-            "olyx-${GITHUB_REF_NAME}-x86_64-apple-darwin.tar.gz"
-            "olyx-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz"
+            "olyx-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz"
+            "olyx-${RELEASE_TAG}-x86_64-apple-darwin.tar.gz"
+            "olyx-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz"
           )
           for file in "${expected[@]}"; do
             test -s "dist/${file}"
@@ -291,7 +320,7 @@ jobs:
             cosign verify-blob \
               --certificate "dist/${file}.pem" \
               --signature "dist/${file}.sig" \
-              --certificate-identity-regexp 'https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' \
+              --certificate-identity-regexp "${OIDC_IDENTITY_REGEX}" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "dist/${file}"
           done
@@ -304,7 +333,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME}"
+          version="${RELEASE_TAG}"
           cat > dist/RELEASE_NOTES.md <<EOF
           ## Install
 
@@ -329,7 +358,7 @@ jobs:
           cosign verify-blob \\
             --certificate "\${asset}.pem" \\
             --signature "\${asset}.sig" \\
-            --certificate-identity-regexp 'https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+' \\
+            --certificate-identity-regexp "${OIDC_IDENTITY_REGEX}" \\
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
             "\${asset}"
           tar -xzf "\${asset}"
@@ -338,6 +367,7 @@ jobs:
           EOF
 
       - name: Publish release
+        if: ${{ github.event_name == 'push' }}
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
@@ -345,15 +375,15 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist/SHA256SUMS.txt
-            dist/olyx-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
-            dist/olyx-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sha256
-            dist/olyx-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sig
-            dist/olyx-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.pem
-            dist/olyx-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz
-            dist/olyx-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz.sha256
-            dist/olyx-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz.sig
-            dist/olyx-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz.pem
-            dist/olyx-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz
-            dist/olyx-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz.sha256
-            dist/olyx-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz.sig
-            dist/olyx-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz.pem
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz.sha256
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz.sig
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz.pem
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.sha256
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.sig
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.pem
+            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz
+            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.sha256
+            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.sig
+            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.pem
