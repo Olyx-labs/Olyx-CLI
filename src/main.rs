@@ -19,6 +19,8 @@ async fn main() {
 }
 
 async fn run(args: Vec<String>) -> Result<(), CliError> {
+    // Keep the top-level dispatcher thin: parse once, then hand off to a
+    // single command-specific branch so the public CLI remains easy to read.
     let invocation = Invocation::parse(args)?;
     if matches!(
         &invocation.command,
@@ -271,6 +273,9 @@ fn parse_fixed_arity_help(
     help_topic: HelpTopic,
     command: Command,
 ) -> Result<Command, CliError> {
+    // `config` and `inspect` intentionally have a narrow surface: either the
+    // command itself or a help flag. Extra args are usually typos and should
+    // fail fast instead of being ignored.
     if args.len() == 1 {
         Ok(command)
     } else if args.len() == 2
@@ -447,6 +452,8 @@ fn verify_runtime(
     public_key_b64: Option<&str>,
     public_key_path: Option<&str>,
 ) -> Result<olyx_core::RuntimeStatus, CliError> {
+    // Runtime activation fails closed: the CLI only succeeds when both the
+    // signed artifacts and the licensed runtime modes explicitly allow CLI use.
     let license_path = license_path
         .map(str::to_string)
         .or_else(|| env::var("OLYX_LICENSE_PATH").ok())
@@ -489,8 +496,14 @@ fn verify_runtime(
     let runtime = verifier
         .load_runtime_for_mode(&license, &policy_pack, RuntimeMode::Cli)
         .map_err(|e| CliError::message(format!("runtime verification failed: {e}")))?;
+    let status = runtime.status();
+    if !status.runtime_modes.contains(&RuntimeMode::Cli) {
+        return Err(CliError::message(
+            "runtime verification failed: license does not include CLI runtime mode",
+        ));
+    }
 
-    Ok(runtime.status())
+    Ok(status)
 }
 
 fn read_signed_envelope(path: &str) -> Result<SignedEnvelope, CliError> {
@@ -559,6 +572,8 @@ async fn request_json(
     body: Option<&Value>,
     dry_run: bool,
 ) -> Result<Value, CliError> {
+    // Dry-run is a public-facing inspection path, so it returns the exact
+    // request shape while redacting secrets instead of inventing mock payloads.
     if dry_run {
         return Ok(json!({
             "dry_run": true,
@@ -672,6 +687,8 @@ fn format_api_error(value: &Value) -> String {
 }
 
 fn sanitize_json_for_output(value: &Value) -> Value {
+    // Redact recursively because responses, trace bodies, and dry-run payloads
+    // can carry secrets several levels deep in nested objects or arrays.
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
@@ -720,6 +737,8 @@ fn is_sensitive_key(key: &str) -> bool {
 }
 
 fn sanitize_text_for_output(raw: &str) -> String {
+    // Broad token matching keeps the CLI safe in public logs without tying the
+    // redaction logic to one provider or one secret format.
     let mut value = raw.to_string();
     value = redact_bearer_token(&value);
 
@@ -799,6 +818,8 @@ fn token_suffix_len(raw: &str) -> usize {
 }
 
 fn help_text(topic: HelpTopic) -> &'static str {
+    // Keep help bodies as constants so the public shell help and the snapshot
+    // tests stay in lockstep as the CLI surface evolves.
     match topic {
         HelpTopic::General => GENERAL_HELP,
         HelpTopic::Inspect => INSPECT_HELP,
@@ -1363,7 +1384,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.to_string().contains("runtime verification failed"));
+        assert!(
+            error
+                .to_string()
+                .contains("license does not allow runtime mode")
+        );
 
         let _ = std::fs::remove_file(license_path);
         let _ = std::fs::remove_file(policy_path);

@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_DEBUG: 0
   RUSTFLAGS: -D warnings
 
 jobs:
@@ -85,6 +86,7 @@ jobs:
           lto = "thin"
           opt-level = "z"
           panic = "abort"
+          debug = 0
           strip = "symbols"
           TOML
 
@@ -165,6 +167,7 @@ jobs:
           lto = "thin"
           opt-level = "z"
           panic = "abort"
+          debug = 0
           strip = "symbols"
           TOML
 
