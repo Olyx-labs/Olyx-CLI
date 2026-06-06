@@ -294,10 +294,9 @@ jobs:
             install -m 0755 olyx /usr/local/bin/olyx
 
           Verify this archive with the adjacent .sha256 file. Verify provenance with the adjacent
-          Sigstore certificate and signature:
+          Sigstore bundle:
             cosign verify-blob \
-              --certificate ${asset}.tar.gz.pem \
-              --signature ${asset}.tar.gz.sig \
+              --bundle ${asset}.tar.gz.bundle \
               --certificate-identity-regexp "${OIDC_IDENTITY_REGEX}" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               ${asset}.tar.gz
@@ -309,8 +308,7 @@ jobs:
           tar -C dist -czf "dist/${asset}.tar.gz" "${asset}"
           shasum -a 256 "dist/${asset}.tar.gz" > "dist/${asset}.tar.gz.sha256"
           cosign sign-blob --yes \
-            --output-signature "dist/${asset}.tar.gz.sig" \
-            --output-certificate "dist/${asset}.tar.gz.pem" \
+            --bundle "dist/${asset}.tar.gz.bundle" \
             "dist/${asset}.tar.gz"
           rm -rf "dist/${asset}"
 
@@ -323,8 +321,7 @@ jobs:
           path: |
             release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz
             release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz.sha256
-            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz.sig
-            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz.pem
+            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz.bundle
 
   release:
     name: Publish GitHub Release
@@ -354,12 +351,10 @@ jobs:
           for file in "${expected[@]}"; do
             test -s "dist/${file}"
             test -s "dist/${file}.sha256"
-            test -s "dist/${file}.sig"
-            test -s "dist/${file}.pem"
+            test -s "dist/${file}.bundle"
             shasum -a 256 -c "dist/${file}.sha256"
             cosign verify-blob \
-              --certificate "dist/${file}.pem" \
-              --signature "dist/${file}.sig" \
+              --bundle "dist/${file}.bundle" \
               --certificate-identity-regexp "${OIDC_IDENTITY_REGEX}" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               "dist/${file}"
@@ -386,8 +381,7 @@ jobs:
           Each archive ships with:
 
           - a per-archive \`.sha256\` checksum file
-          - a Sigstore \`.sig\` signature
-          - a Sigstore \`.pem\` certificate
+          - a Sigstore \`.bundle\` file
           - a release-wide \`SHA256SUMS.txt\` manifest
 
           Verify a downloaded archive:
@@ -396,8 +390,7 @@ jobs:
           asset="olyx-\${version}-x86_64-unknown-linux-gnu.tar.gz"
           shasum -a 256 -c "\${asset}.sha256"
           cosign verify-blob \\
-            --certificate "\${asset}.pem" \\
-            --signature "\${asset}.sig" \\
+            --bundle "\${asset}.bundle" \\
             --certificate-identity-regexp "${OIDC_IDENTITY_REGEX}" \\
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
             "\${asset}"
@@ -417,13 +410,10 @@ jobs:
             dist/SHA256SUMS.txt
             dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz
             dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz.sha256
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz.sig
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz.pem
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz.bundle
             dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz
             dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.sha256
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.sig
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.pem
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.bundle
             dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz
             dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.sha256
-            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.sig
-            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.pem
+            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.bundle
