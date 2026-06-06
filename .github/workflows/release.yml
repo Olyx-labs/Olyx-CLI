@@ -128,6 +128,10 @@ jobs:
           strip = "symbols"
           TOML
 
+      - name: Generate lockfile
+        working-directory: release-workspace
+        run: cargo generate-lockfile
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -224,6 +228,10 @@ jobs:
           debug = 0
           strip = "symbols"
           TOML
+
+      - name: Generate lockfile
+        working-directory: release-workspace
+        run: cargo generate-lockfile
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
