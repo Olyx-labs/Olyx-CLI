@@ -29,7 +29,7 @@ env:
   CARGO_PROFILE_RELEASE_DEBUG: 0
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
   REHEARSAL: ${{ github.event_name == 'workflow_dispatch' && inputs.rehearsal || false }}
-  OIDC_IDENTITY_REGEX: ${{ github.event_name == 'workflow_dispatch' && format('https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@{0}', github.ref) || 'https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' }}
+  OIDC_IDENTITY_REGEX: ${{ github.event_name == 'workflow_dispatch' && format('https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@{0}', github.ref) || 'https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' }}
   RUSTFLAGS: -D warnings
 
 jobs:
