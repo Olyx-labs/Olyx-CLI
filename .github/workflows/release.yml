@@ -40,7 +40,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout CLI
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           path: release-workspace/olyx-cli
           persist-credentials: false
@@ -95,7 +95,7 @@ jobs:
           fi
           rm -f "${response_file}"
       - name: Checkout private core
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           repository: ${{ vars.OLYX_CORE_REPOSITORY }}
           token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
@@ -154,6 +154,12 @@ jobs:
         working-directory: release-workspace
         run: cargo test --locked -p olyx-cli -p olyx-core
 
+      - name: Audit dependencies
+        working-directory: release-workspace
+        run: |
+          cargo install cargo-audit --locked --quiet
+          cargo audit
+
   build:
     name: Build ${{ matrix.target }}
     needs: quality
@@ -167,14 +173,24 @@ jobs:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            ext: ""
+            archive_ext: tar.gz
           - os: macos-15
             target: x86_64-apple-darwin
+            ext: ""
+            archive_ext: tar.gz
           - os: macos-15
             target: aarch64-apple-darwin
+            ext: ""
+            archive_ext: tar.gz
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            ext: .exe
+            archive_ext: zip
 
     steps:
       - name: Checkout CLI
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           path: release-workspace/olyx-cli
           persist-credentials: false
@@ -196,7 +212,7 @@ jobs:
           fi
           rm -f "${response_file}"
       - name: Checkout private core
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           repository: ${{ vars.OLYX_CORE_REPOSITORY }}
           token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
@@ -271,7 +287,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          binary="target/${{ matrix.target }}/release/olyx"
+          binary="target/${{ matrix.target }}/release/olyx${{ matrix.ext }}"
           "${binary}" --version | grep -E '^olyx [0-9]+\.[0-9]+\.[0-9]+$'
           "${binary}" help >/dev/null
           "${binary}" help trace >/dev/null
@@ -284,10 +300,29 @@ jobs:
           set -euo pipefail
           version="${RELEASE_TAG}"
           asset="olyx-${version}-${{ matrix.target }}"
+          archive_ext="${{ matrix.archive_ext }}"
           mkdir -p "dist/${asset}"
-          cp "target/${{ matrix.target }}/release/olyx" "dist/${asset}/olyx"
-          chmod 0755 "dist/${asset}/olyx"
-          cat > "dist/${asset}/README.txt" <<EOF
+          cp "target/${{ matrix.target }}/release/olyx${{ matrix.ext }}" "dist/${asset}/olyx${{ matrix.ext }}"
+          if [[ "${archive_ext}" != "zip" ]]; then
+            chmod 0755 "dist/${asset}/olyx${{ matrix.ext }}"
+          fi
+          if [[ "${archive_ext}" == "zip" ]]; then
+            cat > "dist/${asset}/README.txt" <<EOF
+          Olyx CLI ${version} for ${{ matrix.target }}
+
+          Install:
+            Move olyx.exe to a directory on your PATH, e.g. %LOCALAPPDATA%\Microsoft\WindowsApps\
+
+          Verify this archive with the adjacent .sha256 file. Verify provenance with the adjacent
+          Sigstore bundle:
+            cosign verify-blob \
+              --bundle ${asset}.zip.bundle \
+              --certificate-identity-regexp "${OIDC_IDENTITY_REGEX}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              ${asset}.zip
+          EOF
+          else
+            cat > "dist/${asset}/README.txt" <<EOF
           Olyx CLI ${version} for ${{ matrix.target }}
 
           Install:
@@ -301,27 +336,36 @@ jobs:
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               ${asset}.tar.gz
           EOF
+          fi
           find "dist/${asset}" -maxdepth 2 -type f | sort
           test ! -e "dist/${asset}/Olyx-core"
           test ! -e "dist/${asset}/src"
           test ! -e "dist/${asset}/Cargo.toml"
-          tar -C dist -czf "dist/${asset}.tar.gz" "${asset}"
-          shasum -a 256 "dist/${asset}.tar.gz" > "dist/${asset}.tar.gz.sha256"
-          cosign sign-blob --yes \
-            --bundle "dist/${asset}.tar.gz.bundle" \
-            "dist/${asset}.tar.gz"
+          if [[ "${archive_ext}" == "zip" ]]; then
+            (cd dist && 7z a "${asset}.zip" "${asset}")
+            sha256sum "dist/${asset}.zip" > "dist/${asset}.zip.sha256"
+            cosign sign-blob --yes \
+              --bundle "dist/${asset}.zip.bundle" \
+              "dist/${asset}.zip"
+          else
+            tar -C dist -czf "dist/${asset}.tar.gz" "${asset}"
+            shasum -a 256 "dist/${asset}.tar.gz" > "dist/${asset}.tar.gz.sha256"
+            cosign sign-blob --yes \
+              --bundle "dist/${asset}.tar.gz.bundle" \
+              "dist/${asset}.tar.gz"
+          fi
           rm -rf "dist/${asset}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}
           if-no-files-found: error
           retention-days: 7
           path: |
-            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz
-            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz.sha256
-            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz.bundle
+            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}
+            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}.sha256
+            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}.bundle
 
   release:
     name: Publish GitHub Release
@@ -331,7 +375,7 @@ jobs:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
@@ -347,12 +391,13 @@ jobs:
             "olyx-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz"
             "olyx-${RELEASE_TAG}-x86_64-apple-darwin.tar.gz"
             "olyx-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz"
+            "olyx-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip"
           )
           for file in "${expected[@]}"; do
             test -s "dist/${file}"
             test -s "dist/${file}.sha256"
             test -s "dist/${file}.bundle"
-            shasum -a 256 -c "dist/${file}.sha256"
+            sha256sum -c "dist/${file}.sha256"
             cosign verify-blob \
               --bundle "dist/${file}.bundle" \
               --certificate-identity-regexp "${OIDC_IDENTITY_REGEX}" \
@@ -361,7 +406,7 @@ jobs:
           done
           (
             cd dist
-            shasum -a 256 *.tar.gz > SHA256SUMS.txt
+            sha256sum *.tar.gz *.zip > SHA256SUMS.txt
           )
 
       - name: Build release notes
@@ -374,21 +419,21 @@ jobs:
 
           Download the archive for your platform, verify its checksum, then install the \`olyx\` binary.
 
-          - \`olyx-\${version}-x86_64-unknown-linux-gnu.tar.gz\`
-          - \`olyx-\${version}-x86_64-apple-darwin.tar.gz\`
-          - \`olyx-\${version}-aarch64-apple-darwin.tar.gz\`
+          | Platform | Archive |
+          | :--- | :--- |
+          | Linux x86_64 | \`olyx-\${version}-x86_64-unknown-linux-gnu.tar.gz\` |
+          | macOS Apple Silicon | \`olyx-\${version}-aarch64-apple-darwin.tar.gz\` |
+          | macOS Intel | \`olyx-\${version}-x86_64-apple-darwin.tar.gz\` |
+          | Windows x86_64 | \`olyx-\${version}-x86_64-pc-windows-msvc.zip\` |
 
-          Each archive ships with:
+          Each archive ships with a per-archive \`.sha256\` checksum file, a Sigstore \`.bundle\` file,
+          and a release-wide \`SHA256SUMS.txt\` manifest.
 
-          - a per-archive \`.sha256\` checksum file
-          - a Sigstore \`.bundle\` file
-          - a release-wide \`SHA256SUMS.txt\` manifest
-
-          Verify a downloaded archive:
+          **Linux / macOS:**
 
           \`\`\`sh
           asset="olyx-\${version}-x86_64-unknown-linux-gnu.tar.gz"
-          shasum -a 256 -c "\${asset}.sha256"
+          sha256sum -c "\${asset}.sha256"
           cosign verify-blob \\
             --bundle "\${asset}.bundle" \\
             --certificate-identity-regexp "${OIDC_IDENTITY_REGEX}" \\
@@ -397,11 +442,21 @@ jobs:
           tar -xzf "\${asset}"
           install -m 0755 "olyx-\${version}-x86_64-unknown-linux-gnu/olyx" /usr/local/bin/olyx
           \`\`\`
+
+          **Windows (PowerShell):**
+
+          \`\`\`powershell
+          \$asset = "olyx-\${version}-x86_64-pc-windows-msvc.zip"
+          (Get-FileHash \$asset -Algorithm SHA256).Hash.ToLower() + "  " + \$asset |
+            Compare-Object (Get-Content "\${asset}.sha256")
+          Expand-Archive \$asset -DestinationPath .
+          Move-Item "olyx-\${version}-x86_64-pc-windows-msvc\\olyx.exe" "\$env:LOCALAPPDATA\\Microsoft\\WindowsApps\\olyx.exe"
+          \`\`\`
           EOF
 
       - name: Publish release
         if: ${{ github.event_name == 'push' }}
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           body_path: dist/RELEASE_NOTES.md
@@ -417,3 +472,6 @@ jobs:
             dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz
             dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.sha256
             dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.bundle
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-pc-windows-msvc.zip
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-pc-windows-msvc.zip.sha256
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-pc-windows-msvc.zip.bundle

@@ -24,7 +24,7 @@ version="v0.1.0"
 asset="olyx-${version}-aarch64-apple-darwin.tar.gz"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
-shasum -a 256 -c "${asset}.sha256"
+sha256sum -c "${asset}.sha256"
 tar -xzf "${asset}"
 sudo install -m 0755 "olyx-${version}-aarch64-apple-darwin/olyx" /usr/local/bin/olyx
 olyx --version
@@ -37,7 +37,7 @@ version="v0.1.0"
 asset="olyx-${version}-x86_64-apple-darwin.tar.gz"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
-shasum -a 256 -c "${asset}.sha256"
+sha256sum -c "${asset}.sha256"
 tar -xzf "${asset}"
 sudo install -m 0755 "olyx-${version}-x86_64-apple-darwin/olyx" /usr/local/bin/olyx
 olyx --version
@@ -50,23 +50,38 @@ version="v0.1.0"
 asset="olyx-${version}-x86_64-unknown-linux-gnu.tar.gz"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
-sha256sum -c "${asset}.sha256" || shasum -a 256 -c "${asset}.sha256"
+sha256sum -c "${asset}.sha256"
 tar -xzf "${asset}"
 sudo install -m 0755 "olyx-${version}-x86_64-unknown-linux-gnu/olyx" /usr/local/bin/olyx
 olyx --version
 ```
 
-Each release also includes Sigstore signature and certificate files, plus a
-release-wide `SHA256SUMS.txt` manifest:
+Windows x86_64 (PowerShell):
+
+```powershell
+$version = "v0.1.0"
+$asset = "olyx-$version-x86_64-pc-windows-msvc.zip"
+Invoke-WebRequest -Uri "https://github.com/olyxlabs/olyx-cli/releases/download/$version/$asset" -OutFile $asset
+Invoke-WebRequest -Uri "https://github.com/olyxlabs/olyx-cli/releases/download/$version/$asset.sha256" -OutFile "$asset.sha256"
+(Get-FileHash $asset -Algorithm SHA256).Hash.ToLower() + "  " + $asset |
+  Compare-Object (Get-Content "$asset.sha256")
+Expand-Archive $asset -DestinationPath .
+Move-Item "olyx-$version-x86_64-pc-windows-msvc\olyx.exe" "$env:LOCALAPPDATA\Microsoft\WindowsApps\olyx.exe"
+olyx --version
+```
+
+Each release also includes a Sigstore bundle for provenance verification:
 
 ```sh
 cosign verify-blob \
-  --certificate "${asset}.pem" \
-  --signature "${asset}.sig" \
+  --bundle "${asset}.bundle" \
   --certificate-identity-regexp 'https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "${asset}"
 ```
+
+Package manager distribution (Homebrew tap and Chocolatey) is planned for a
+future release once the public release workflow has been stable in production.
 
 For local development:
 

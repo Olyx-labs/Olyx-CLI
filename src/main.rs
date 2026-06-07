@@ -510,13 +510,13 @@ fn read_signed_envelope(path: &str) -> Result<SignedEnvelope, CliError> {
     let metadata = fs::metadata(path).map_err(|e| {
         CliError::message(format!(
             "failed to inspect signed envelope file {}: {e}",
-            redact_path(path)
+            truncate_path(path)
         ))
     })?;
     if metadata.len() > MAX_SIGNED_ENVELOPE_FILE_BYTES {
         return Err(CliError::message(format!(
             "signed envelope file {} exceeds {} bytes",
-            redact_path(path),
+            truncate_path(path),
             MAX_SIGNED_ENVELOPE_FILE_BYTES
         )));
     }
@@ -524,13 +524,13 @@ fn read_signed_envelope(path: &str) -> Result<SignedEnvelope, CliError> {
     let raw = fs::read_to_string(path).map_err(|e| {
         CliError::message(format!(
             "failed to read signed envelope file {}: {e}",
-            redact_path(path)
+            truncate_path(path)
         ))
     })?;
     serde_json::from_str(&raw).map_err(|e| {
         CliError::message(format!(
             "invalid signed envelope JSON at {}: {e}",
-            redact_path(path)
+            truncate_path(path)
         ))
     })
 }
@@ -539,12 +539,12 @@ fn read_public_key_file(path: &str) -> Result<String, CliError> {
     fs::read_to_string(path).map_err(|e| {
         CliError::message(format!(
             "failed to read public key file {}: {e}",
-            redact_path(path)
+            truncate_path(path)
         ))
     })
 }
 
-fn redact_path(path: &str) -> String {
+fn truncate_path(path: &str) -> String {
     let trimmed = path.trim();
     if trimmed.len() > 120 {
         format!("{}...", trimmed.chars().take(120).collect::<String>())
@@ -585,7 +585,10 @@ async fn request_json(
     }
 
     let url = format!("{base_url}{path}");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| CliError::message(format!("http client error: {e}")))?;
     let method = reqwest::Method::from_bytes(method.as_bytes())
         .map_err(|e| CliError::message(format!("invalid HTTP method: {e}")))?;
     let mut request = client
@@ -709,6 +712,8 @@ fn sanitize_json_for_output(value: &Value) -> Value {
 }
 
 fn is_sensitive_key(key: &str) -> bool {
+    // Normalize to lowercase with underscores so both snake_case and camelCase
+    // key names are caught (e.g. "api_key" and "apiKey" both normalize to "apikey").
     let normalized = key
         .chars()
         .map(|ch| {
@@ -723,16 +728,23 @@ fn is_sensitive_key(key: &str) -> bool {
     matches!(
         normalized.as_str(),
         "api_key"
+            | "apikey"
             | "access_token"
+            | "accesstoken"
             | "refresh_token"
+            | "refreshtoken"
             | "token"
             | "secret"
             | "client_secret"
+            | "clientsecret"
             | "authorization"
             | "password"
             | "openai_api_key"
+            | "openaiapikey"
             | "anthropic_api_key"
+            | "anthropicapikey"
             | "gemini_api_key"
+            | "geminiapikey"
     )
 }
 
