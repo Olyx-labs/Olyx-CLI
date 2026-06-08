@@ -506,8 +506,14 @@ mod tests {
         let openai_key = fake_openai_key();
         let lower = sanitize_text_for_output(&format!("bearer {openai_key}"));
         let upper = sanitize_text_for_output(&format!("BEARER {openai_key}"));
-        assert!(!lower.contains(&openai_key), "lowercase bearer not redacted");
-        assert!(!upper.contains(&openai_key), "uppercase bearer not redacted");
+        assert!(
+            !lower.contains(&openai_key),
+            "lowercase bearer not redacted"
+        );
+        assert!(
+            !upper.contains(&openai_key),
+            "uppercase bearer not redacted"
+        );
     }
 
     #[test]

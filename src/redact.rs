@@ -64,9 +64,7 @@ pub(crate) fn sanitize_json_for_output(value: &Value) -> Value {
                 })
                 .collect(),
         ),
-        Value::Array(values) => {
-            Value::Array(values.iter().map(sanitize_json_for_output).collect())
-        }
+        Value::Array(values) => Value::Array(values.iter().map(sanitize_json_for_output).collect()),
         Value::String(text) => Value::String(sanitize_text_for_output(text)),
         other => other.clone(),
     }

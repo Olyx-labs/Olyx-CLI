@@ -14,7 +14,13 @@ pub(crate) fn normalize_base_url(raw: &str) -> Result<String, CliError> {
     } else if trimmed.starts_with("http://") {
         // Allow http only for loopback addresses (local development and CI smoke checks).
         let host = trimmed.trim_start_matches("http://");
-        let host = host.split('/').next().unwrap_or("").split(':').next().unwrap_or("");
+        let host = host
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("");
         if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
             Ok(trimmed.to_string())
         } else {
