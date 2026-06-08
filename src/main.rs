@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod command;
 mod error;
 mod help;
@@ -41,7 +43,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             let response = request_json(
                 "GET",
                 &invocation.base_url,
-                "/api/v1/sdk/config",
+                "/api/v1/config",
                 invocation.api_key.as_deref(),
                 None,
                 invocation.dry_run,
@@ -465,7 +467,7 @@ mod tests {
         let response = request_json(
             "GET",
             "https://app.olyxai.io",
-            "/api/v1/sdk/config",
+            "/api/v1/config",
             None,
             None,
             true,
@@ -475,16 +477,43 @@ mod tests {
 
         assert_eq!(response["dry_run"], true);
         assert_eq!(response["method"], "GET");
-        assert_eq!(response["url"], "https://app.olyxai.io/api/v1/sdk/config");
+        assert_eq!(response["url"], "https://app.olyxai.io/api/v1/config");
         assert_eq!(response["api_key_present"], false);
         assert_eq!(response["body"], Value::Null);
     }
 
     #[test]
-    fn formats_public_api_error_shape() {
+    fn normalize_base_url_blocks_metadata_endpoints() {
         use crate::http::normalize_base_url;
-        let _ = normalize_base_url("https://app.olyxai.io").unwrap();
-        // format_api_error is exercised via request_json; verify http module compiles correctly.
+        // SSRF: cloud metadata IPs must be rejected even over HTTPS.
+        for blocked in &[
+            "https://169.254.169.254",
+            "https://169.254.169.254/latest/meta-data/",
+            "https://100.100.100.200",
+            "https://metadata.google.internal",
+            "https://169.254.0.2",
+        ] {
+            assert!(
+                normalize_base_url(blocked).is_err(),
+                "{blocked} should be blocked"
+            );
+        }
+        // Legitimate endpoints must still pass.
+        assert!(normalize_base_url("https://app.olyxai.io").is_ok());
+        assert!(normalize_base_url("http://localhost:8080").is_ok());
+    }
+
+    #[test]
+    fn sanitize_json_does_not_overflow_on_deep_nesting() {
+        use crate::redact::sanitize_json_for_output;
+        // Build a 100-level nested object — well past MAX_SANITIZE_DEPTH (32).
+        let mut value = json!("leaf");
+        for _ in 0..100 {
+            value = json!({ "nested": value });
+        }
+        // Must return without panic; deep nodes are replaced with REDACTED.
+        let sanitized = sanitize_json_for_output(&value);
+        assert!(sanitized.is_object());
     }
 
     #[test]

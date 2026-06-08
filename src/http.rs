@@ -10,17 +10,16 @@ pub(crate) fn api_key_present(api_key: Option<&str>) -> bool {
 pub(crate) fn normalize_base_url(raw: &str) -> Result<String, CliError> {
     let trimmed = raw.trim().trim_end_matches('/');
     if trimmed.starts_with("https://") {
+        let host = extract_host(trimmed.trim_start_matches("https://"));
+        if is_ssrf_blocked_host(host) {
+            return Err(CliError::usage(
+                "base URL resolves to a blocked address (cloud metadata or link-local range); use the public Olyx Cloud endpoint or a private-deployment hostname",
+            ));
+        }
         Ok(trimmed.to_string())
     } else if trimmed.starts_with("http://") {
         // Allow http only for loopback addresses (local development and CI smoke checks).
-        let host = trimmed.trim_start_matches("http://");
-        let host = host
-            .split('/')
-            .next()
-            .unwrap_or("")
-            .split(':')
-            .next()
-            .unwrap_or("");
+        let host = extract_host(trimmed.trim_start_matches("http://"));
         if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
             Ok(trimmed.to_string())
         } else {
@@ -33,6 +32,39 @@ pub(crate) fn normalize_base_url(raw: &str) -> Result<String, CliError> {
             "base URL must start with https:// (or http://localhost for local development)",
         ))
     }
+}
+
+fn extract_host(authority: &str) -> &str {
+    // Strip path, then strip port. Handles IPv6 literals ([::1]) by leaving them intact.
+    let without_path = authority.split('/').next().unwrap_or("");
+    if without_path.starts_with('[') {
+        // IPv6 literal — return through closing bracket.
+        without_path
+            .find(']')
+            .map(|i| &without_path[..=i])
+            .unwrap_or(without_path)
+    } else {
+        without_path.split(':').next().unwrap_or("")
+    }
+}
+
+fn is_ssrf_blocked_host(host: &str) -> bool {
+    // Block cloud instance metadata endpoints and link-local ranges.
+    // These addresses are only reachable from inside a cloud VM, so a
+    // misconfigured OLYX_BASE_URL pointing at them would exfiltrate the
+    // bearer token to the metadata service rather than Olyx Cloud.
+    // 169.254.x.x covers AWS IMDSv1/v2, Azure IMDS, and the full RFC 3927
+    // link-local block. Named metadata hostnames are checked explicitly.
+    matches!(
+        host,
+        "169.254.169.254"
+            | "metadata.google.internal"
+            | "100.100.100.200"
+            | "169.254.0.2"
+            | "169.254.0.1"
+            | "metadata.internal"
+    ) || host.starts_with("169.254.")
+        || host.starts_with("fd00:ec2:")
 }
 
 pub(crate) async fn request_json(

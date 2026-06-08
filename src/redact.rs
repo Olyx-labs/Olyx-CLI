@@ -48,9 +48,20 @@ pub(crate) fn is_sensitive_key(key: &str) -> bool {
     )
 }
 
+// Prevents stack overflow from adversarially nested JSON (e.g. in --metadata or
+// API error responses). Real payloads are shallow; this cap is generous.
+const MAX_SANITIZE_DEPTH: usize = 32;
+
 pub(crate) fn sanitize_json_for_output(value: &Value) -> Value {
+    sanitize_json_depth(value, 0)
+}
+
+fn sanitize_json_depth(value: &Value, depth: usize) -> Value {
     // Redact recursively because responses, trace bodies, and dry-run payloads
     // can carry secrets several levels deep in nested objects or arrays.
+    if depth >= MAX_SANITIZE_DEPTH {
+        return Value::String(REDACTED.to_string());
+    }
     match value {
         Value::Object(map) => Value::Object(
             map.iter()
@@ -58,13 +69,18 @@ pub(crate) fn sanitize_json_for_output(value: &Value) -> Value {
                     let sanitized = if is_sensitive_key(key) {
                         Value::String(REDACTED.to_string())
                     } else {
-                        sanitize_json_for_output(value)
+                        sanitize_json_depth(value, depth + 1)
                     };
                     (key.clone(), sanitized)
                 })
                 .collect(),
         ),
-        Value::Array(values) => Value::Array(values.iter().map(sanitize_json_for_output).collect()),
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .map(|v| sanitize_json_depth(v, depth + 1))
+                .collect(),
+        ),
         Value::String(text) => Value::String(sanitize_text_for_output(text)),
         other => other.clone(),
     }

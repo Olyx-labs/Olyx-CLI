@@ -42,7 +42,7 @@ This repository covers the public `olyx` CLI command surface and release packagi
 - Privilege escalation or arbitrary code execution triggered by CLI input
 
 **Out of scope:**
-- Vulnerabilities in dependencies already publicly disclosed and tracked by cargo-audit
+- Vulnerabilities in dependencies already publicly disclosed and tracked by cargo-deny
 - Social engineering or phishing attacks
 - Theoretical vulnerabilities without a working proof of concept
 

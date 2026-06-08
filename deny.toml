@@ -1,0 +1,54 @@
+[graph]
+# Only audit deps that are actually reachable in the final binary.
+targets = [
+    { triple = "x86_64-unknown-linux-musl" },
+    { triple = "aarch64-unknown-linux-musl" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "x86_64-pc-windows-msvc" },
+]
+
+[advisories]
+# Deny any crate with an unpatched security advisory.
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+
+[licenses]
+version = 2
+# Enterprise-approved SPDX identifiers. Any unlisted license is an error.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "OpenSSL",
+    "CC0-1.0",
+    "Zlib",
+]
+# Confidence threshold for license text matching.
+confidence-threshold = 0.8
+
+[bans]
+# Deny duplicate versions of the same crate unless explicitly allowed below.
+multiple-versions = "warn"
+# Deny crates known to be wildcards or yanked stubs.
+deny = []
+# Allow multiple versions of crates where the ecosystem commonly ships both.
+skip = [
+    { name = "bitflags", reason = "ecosystem ships v1 and v2 simultaneously" },
+    { name = "syn", reason = "proc-macro crates ship both syn 1 and syn 2" },
+    { name = "base64", reason = "ecosystem transition from 0.21 to 0.22" },
+]
+
+[sources]
+# Only allow dependencies from crates.io and the local workspace path.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

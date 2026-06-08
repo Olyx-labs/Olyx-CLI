@@ -156,10 +156,11 @@ jobs:
         run: cargo test --locked -p olyx-cli -p olyx-core
 
       - name: Audit dependencies
-        working-directory: release-workspace
-        run: |
-          cargo install cargo-audit --version "0.21.0" --locked --quiet
-          cargo audit
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          manifest-path: release-workspace/Cargo.toml
+          arguments: --config release-workspace/olyx-cli/deny.toml
+          command: check advisories licenses bans sources
 
   build:
     name: Build ${{ matrix.target }}
@@ -173,9 +174,15 @@ jobs:
       matrix:
         include:
           - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             ext: ""
             archive_ext: tar.gz
+            cross: true
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-musl
+            ext: ""
+            archive_ext: tar.gz
+            cross: true
           - os: macos-15
             target: x86_64-apple-darwin
             ext: ""
@@ -261,6 +268,10 @@ jobs:
         with:
           workspaces: release-workspace
 
+      - name: Install cross
+        if: matrix.cross == true
+        run: cargo install cross --version "0.2.5" --locked --quiet
+
       - name: Install cosign
         uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
 
@@ -282,9 +293,12 @@ jobs:
 
       - name: Build release binary
         working-directory: release-workspace
-        run: cargo build --locked -p olyx-cli --bin olyx --release --target ${{ matrix.target }}
+        env:
+          CARGO_CMD: ${{ matrix.cross == true && 'cross' || 'cargo' }}
+        run: $CARGO_CMD build --locked -p olyx-cli --bin olyx --release --target ${{ matrix.target }}
 
       - name: Smoke test release binary
+        if: matrix.target != 'aarch64-unknown-linux-musl'
         working-directory: release-workspace
         shell: bash
         run: |
@@ -390,7 +404,8 @@ jobs:
         run: |
           set -euo pipefail
           expected=(
-            "olyx-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz"
+            "olyx-${RELEASE_TAG}-x86_64-unknown-linux-musl.tar.gz"
+            "olyx-${RELEASE_TAG}-aarch64-unknown-linux-musl.tar.gz"
             "olyx-${RELEASE_TAG}-x86_64-apple-darwin.tar.gz"
             "olyx-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz"
             "olyx-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip"
@@ -423,18 +438,20 @@ jobs:
 
           | Platform | Archive |
           | :--- | :--- |
-          | Linux x86_64 | \`olyx-\${version}-x86_64-unknown-linux-gnu.tar.gz\` |
+          | Linux x86_64 (static) | \`olyx-\${version}-x86_64-unknown-linux-musl.tar.gz\` |
+          | Linux arm64 (static) | \`olyx-\${version}-aarch64-unknown-linux-musl.tar.gz\` |
           | macOS Apple Silicon | \`olyx-\${version}-aarch64-apple-darwin.tar.gz\` |
           | macOS Intel | \`olyx-\${version}-x86_64-apple-darwin.tar.gz\` |
           | Windows x86_64 | \`olyx-\${version}-x86_64-pc-windows-msvc.zip\` |
 
           Each archive ships with a per-archive \`.sha256\` checksum file, a Sigstore \`.bundle\` file,
-          and a release-wide \`SHA256SUMS.txt\` manifest.
+          and a release-wide \`SHA256SUMS.txt\` manifest. Linux binaries are fully static — no runtime
+          dependencies required.
 
           **Linux / macOS:**
 
           \`\`\`sh
-          asset="olyx-\${version}-x86_64-unknown-linux-gnu.tar.gz"
+          asset="olyx-\${version}-x86_64-unknown-linux-musl.tar.gz"
           sha256sum -c "\${asset}.sha256"
           cosign verify-blob \\
             --bundle "\${asset}.bundle" \\
@@ -442,7 +459,7 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
             "\${asset}"
           tar -xzf "\${asset}"
-          install -m 0755 "olyx-\${version}-x86_64-unknown-linux-gnu/olyx" /usr/local/bin/olyx
+          install -m 0755 "olyx-\${version}-x86_64-unknown-linux-musl/olyx" /usr/local/bin/olyx
           \`\`\`
 
           **Windows (PowerShell):**
@@ -465,9 +482,12 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             dist/SHA256SUMS.txt
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz.sha256
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-gnu.tar.gz.bundle
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-musl.tar.gz
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-musl.tar.gz.sha256
+            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-musl.tar.gz.bundle
+            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-unknown-linux-musl.tar.gz
+            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-unknown-linux-musl.tar.gz.sha256
+            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-unknown-linux-musl.tar.gz.bundle
             dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz
             dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.sha256
             dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.bundle
