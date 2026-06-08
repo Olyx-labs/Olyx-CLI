@@ -40,7 +40,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout CLI
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: release-workspace/olyx-cli
           persist-credentials: false
@@ -95,7 +95,7 @@ jobs:
           fi
           rm -f "${response_file}"
       - name: Checkout private core
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ vars.OLYX_CORE_REPOSITORY }}
           token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
@@ -133,12 +133,12 @@ jobs:
         run: cargo generate-lockfile
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable 2025-01
         with:
           components: clippy, rustfmt
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@5cb072d7354962be830356aa6b146f7612846014 # v2.7.5
         with:
           workspaces: release-workspace
 
@@ -190,7 +190,7 @@ jobs:
 
     steps:
       - name: Checkout CLI
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: release-workspace/olyx-cli
           persist-credentials: false
@@ -212,7 +212,7 @@ jobs:
           fi
           rm -f "${response_file}"
       - name: Checkout private core
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ vars.OLYX_CORE_REPOSITORY }}
           token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
@@ -250,17 +250,17 @@ jobs:
         run: cargo generate-lockfile
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable 2025-01
         with:
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@5cb072d7354962be830356aa6b146f7612846014 # v2.7.5
         with:
           workspaces: release-workspace
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4.1.0
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
 
       - name: Validate release tag
         shell: bash
@@ -357,7 +357,7 @@ jobs:
           rm -rf "dist/${asset}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}
           if-no-files-found: error
@@ -375,13 +375,13 @@ jobs:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
         with:
           path: dist
           merge-multiple: true
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4.1.0
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
 
       - name: Verify release files
         shell: bash
@@ -456,7 +456,7 @@ jobs:
 
       - name: Publish release
         if: ${{ github.event_name == 'push' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
         with:
           generate_release_notes: true
           body_path: dist/RELEASE_NOTES.md

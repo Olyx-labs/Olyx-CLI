@@ -13,3 +13,12 @@ olyx-*.tar.gz
 olyx-*.tar.gz.sha256
 olyx-*.tar.gz.sig
 olyx-*.tar.gz.pem
+olyx-*.zip
+olyx-*.bundle
+
+# Key material
+*.pub
+
+# CI build directories
+dist/
+release-workspace/
