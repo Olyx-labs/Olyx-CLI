@@ -31,6 +31,9 @@ env:
   REHEARSAL: ${{ github.event_name == 'workflow_dispatch' && inputs.rehearsal || false }}
   OIDC_IDENTITY_REGEX: ${{ github.event_name == 'workflow_dispatch' && format('https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@{0}', github.ref) || 'https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' }}
   RUSTFLAGS: -D warnings
+  RUST_VERSION: "1.87"
+  CARGO_DENY_VERSION: "0.16.4"
+  COSIGN_VERSION: "2.4.3"
 
 jobs:
   quality:
@@ -87,13 +90,17 @@ jobs:
           set -euo pipefail
           repo_api="https://api.github.com/repos/${OLYX_CORE_REPOSITORY}"
           response_file="$(mktemp)"
-          http_status="$(curl -sS -o "${response_file}" -w '%{http_code}'             -H "Authorization: Bearer ${OLYX_CORE_REPO_TOKEN}"             -H "Accept: application/vnd.github+json"             "${repo_api}")"
+          http_status="$(curl -sS -o "${response_file}" -w '%{http_code}' \
+            -H "Authorization: Bearer ${OLYX_CORE_REPO_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${repo_api}")"
           if [[ "${http_status}" != "200" ]]; then
             echo "OLYX_CORE_REPO_TOKEN cannot access ${OLYX_CORE_REPOSITORY}. Provide a valid token with read access to the private core repo." >&2
             cat "${response_file}" >&2
             exit 1
           fi
           rm -f "${response_file}"
+
       - name: Checkout private core
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -133,15 +140,22 @@ jobs:
         run: cargo generate-lockfile
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable 2025-01
-        with:
-          toolchain: "1.87"
-          components: clippy, rustfmt
+        shell: bash
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy,rustfmt --no-self-update
+          rustup default "${RUST_VERSION}"
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@5cb072d7354962be830356aa6b146f7612846014 # v2.7.5
+        uses: actions/cache@v4 # pin to commit SHA before shipping to production
         with:
-          workspaces: release-workspace
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            release-workspace/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('release-workspace/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: Format CLI
         working-directory: release-workspace
@@ -155,12 +169,20 @@ jobs:
         working-directory: release-workspace
         run: cargo test --locked -p olyx-cli -p olyx-core
 
-      - name: Audit dependencies
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+      - name: Cache cargo-deny
+        uses: actions/cache@v4 # pin to commit SHA before shipping to production
+        id: cache-cargo-deny
         with:
-          manifest-path: release-workspace/Cargo.toml
-          arguments: --config release-workspace/olyx-cli/deny.toml
-          command: check advisories licenses bans sources
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-${{ env.CARGO_DENY_VERSION }}
+
+      - name: Install cargo-deny
+        if: steps.cache-cargo-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --version "${CARGO_DENY_VERSION}" --locked --quiet
+
+      - name: Audit dependencies
+        working-directory: release-workspace
+        run: cargo deny --config olyx-cli/deny.toml check advisories licenses bans sources
 
   build:
     name: Build ${{ matrix.target }}
@@ -212,13 +234,17 @@ jobs:
           set -euo pipefail
           repo_api="https://api.github.com/repos/${OLYX_CORE_REPOSITORY}"
           response_file="$(mktemp)"
-          http_status="$(curl -sS -o "${response_file}" -w '%{http_code}'             -H "Authorization: Bearer ${OLYX_CORE_REPO_TOKEN}"             -H "Accept: application/vnd.github+json"             "${repo_api}")"
+          http_status="$(curl -sS -o "${response_file}" -w '%{http_code}' \
+            -H "Authorization: Bearer ${OLYX_CORE_REPO_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${repo_api}")"
           if [[ "${http_status}" != "200" ]]; then
             echo "OLYX_CORE_REPO_TOKEN cannot access ${OLYX_CORE_REPOSITORY}. Provide a valid token with read access to the private core repo." >&2
             cat "${response_file}" >&2
             exit 1
           fi
           rm -f "${response_file}"
+
       - name: Checkout private core
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -258,22 +284,63 @@ jobs:
         run: cargo generate-lockfile
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable 2025-01
-        with:
-          toolchain: "1.87"
-          targets: ${{ matrix.target }}
+        shell: bash
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --no-self-update
+          rustup default "${RUST_VERSION}"
+          rustup target add ${{ matrix.target }}
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@5cb072d7354962be830356aa6b146f7612846014 # v2.7.5
+        uses: actions/cache@v4 # pin to commit SHA before shipping to production
         with:
-          workspaces: release-workspace
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            release-workspace/target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('release-workspace/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+            ${{ runner.os }}-cargo-
+
+      - name: Cache cross
+        if: matrix.cross == true
+        uses: actions/cache@v4 # pin to commit SHA before shipping to production
+        id: cache-cross
+        with:
+          path: ~/.cargo/bin/cross
+          key: cross-0.2.5
 
       - name: Install cross
-        if: matrix.cross == true
+        if: matrix.cross == true && steps.cache-cross.outputs.cache-hit != 'true'
         run: cargo install cross --version "0.2.5" --locked --quiet
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}" in
+            Linux)
+              curl -sSfL \
+                "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+                -o /usr/local/bin/cosign
+              chmod +x /usr/local/bin/cosign
+              ;;
+            macOS)
+              arch=$(uname -m)
+              [[ "${arch}" == "arm64" ]] && cosign_arch="arm64" || cosign_arch="amd64"
+              curl -sSfL \
+                "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-darwin-${cosign_arch}" \
+                -o /usr/local/bin/cosign
+              chmod +x /usr/local/bin/cosign
+              ;;
+            Windows)
+              curl -sSfL \
+                "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-windows-amd64.exe" \
+                -o "${RUNNER_TEMP}/cosign.exe"
+              echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+              ;;
+          esac
 
       - name: Validate release tag
         shell: bash
@@ -397,7 +464,12 @@ jobs:
           merge-multiple: true
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        shell: bash
+        run: |
+          curl -sSfL \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+            -o /usr/local/bin/cosign
+          chmod +x /usr/local/bin/cosign
 
       - name: Verify release files
         shell: bash
@@ -475,25 +547,28 @@ jobs:
 
       - name: Publish release
         if: ${{ github.event_name == 'push' }}
-        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
-        with:
-          generate_release_notes: true
-          body_path: dist/RELEASE_NOTES.md
-          fail_on_unmatched_files: true
-          files: |
-            dist/SHA256SUMS.txt
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-musl.tar.gz
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-musl.tar.gz.sha256
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-unknown-linux-musl.tar.gz.bundle
-            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-unknown-linux-musl.tar.gz
-            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-unknown-linux-musl.tar.gz.sha256
-            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-unknown-linux-musl.tar.gz.bundle
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.sha256
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-apple-darwin.tar.gz.bundle
-            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz
-            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.sha256
-            dist/olyx-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.bundle
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-pc-windows-msvc.zip
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-pc-windows-msvc.zip.sha256
-            dist/olyx-${{ env.RELEASE_TAG }}-x86_64-pc-windows-msvc.zip.bundle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${RELEASE_TAG}" \
+            --title "${RELEASE_TAG}" \
+            --notes-file dist/RELEASE_NOTES.md \
+            --verify-tag \
+            dist/SHA256SUMS.txt \
+            "dist/olyx-${RELEASE_TAG}-x86_64-unknown-linux-musl.tar.gz" \
+            "dist/olyx-${RELEASE_TAG}-x86_64-unknown-linux-musl.tar.gz.sha256" \
+            "dist/olyx-${RELEASE_TAG}-x86_64-unknown-linux-musl.tar.gz.bundle" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-unknown-linux-musl.tar.gz" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-unknown-linux-musl.tar.gz.sha256" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-unknown-linux-musl.tar.gz.bundle" \
+            "dist/olyx-${RELEASE_TAG}-x86_64-apple-darwin.tar.gz" \
+            "dist/olyx-${RELEASE_TAG}-x86_64-apple-darwin.tar.gz.sha256" \
+            "dist/olyx-${RELEASE_TAG}-x86_64-apple-darwin.tar.gz.bundle" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz.sha256" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz.bundle" \
+            "dist/olyx-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip" \
+            "dist/olyx-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip.sha256" \
+            "dist/olyx-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip.bundle"

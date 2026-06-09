@@ -390,8 +390,10 @@ explicitly configured.
 | Homebrew tap | Coming soon |
 | Chocolatey | Coming soon |
 
-Release binaries are built in GitHub Actions, signed with Sigstore, and
-published with SHA-256 checksums.
+Release binaries are built in GitHub Actions across five targets, signed with
+Sigstore, and published with SHA-256 checksums. The pipeline uses only
+official GitHub-maintained actions and plain `cargo` / `rustup` / `gh` shell
+steps — no third-party action wrappers.
 
 ## Local Development
 
@@ -399,6 +401,17 @@ published with SHA-256 checksums.
 cargo build -p olyx-cli --bin olyx --release
 ./target/release/olyx help
 ```
+
+Quality checks (run these before opening a patch):
+
+```sh
+cargo fmt --package olyx-cli -- --check
+cargo clippy -p olyx-cli --all-targets -- -D warnings
+cargo test -p olyx-cli
+cargo deny --config deny.toml check advisories licenses bans sources
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full CI and release pipeline.
 
 ## Repository Policy
 
