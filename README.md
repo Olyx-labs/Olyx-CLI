@@ -19,7 +19,7 @@ asset="olyx-${version}-aarch64-apple-darwin.tar.gz"
 
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
-sha256sum -c "${asset}.sha256"
+shasum -a 256 -c "${asset}.sha256"
 
 tar -xzf "${asset}"
 sudo install -m 0755 "olyx-${version}-aarch64-apple-darwin/olyx" /usr/local/bin/olyx
@@ -34,7 +34,7 @@ asset="olyx-${version}-x86_64-apple-darwin.tar.gz"
 
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
 curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
-sha256sum -c "${asset}.sha256"
+shasum -a 256 -c "${asset}.sha256"
 
 tar -xzf "${asset}"
 sudo install -m 0755 "olyx-${version}-x86_64-apple-darwin/olyx" /usr/local/bin/olyx
@@ -99,7 +99,7 @@ Each release archive also includes a Sigstore bundle.
 ```sh
 cosign verify-blob \
   --bundle "${asset}.bundle" \
-  --certificate-identity-regexp 'https://github.com/olyxlabs/olyx-cli/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' \
+  --certificate-identity-regexp 'https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "${asset}"
 ```
@@ -144,12 +144,33 @@ records the request metadata needed for debugging and replay.
 
 ```sh
 olyx help
+olyx login
 olyx inspect
 olyx config
 olyx trace --metadata JSON
 olyx trace --local-ref REF
 olyx replay TRACE_ID
 olyx verify-runtime --license PATH --policy PATH --key-id KID --public-key-file PATH
+```
+
+### `olyx login`
+
+Opens the Olyx dashboard sign-in page in your browser.
+
+```sh
+olyx login
+```
+
+For local or VPC dashboards, point the command at another control-plane URL:
+
+```sh
+olyx login --base-url https://app.olyxai.io
+```
+
+To print the URL without opening a browser:
+
+```sh
+olyx login --dry-run
 ```
 
 ### `olyx inspect`

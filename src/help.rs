@@ -2,6 +2,7 @@
 pub(crate) enum HelpTopic {
     General,
     Inspect,
+    Login,
     Config,
     Trace,
     Replay,
@@ -14,6 +15,7 @@ pub(crate) fn help_text(topic: HelpTopic) -> &'static str {
     match topic {
         HelpTopic::General => GENERAL_HELP,
         HelpTopic::Inspect => INSPECT_HELP,
+        HelpTopic::Login => LOGIN_HELP,
         HelpTopic::Config => CONFIG_HELP,
         HelpTopic::Trace => TRACE_HELP,
         HelpTopic::Replay => REPLAY_HELP,
@@ -25,8 +27,9 @@ pub(crate) const GENERAL_HELP: &str = r#"olyx CLI
 
 Usage:
   olyx help
-  olyx help <inspect|config|trace|replay|verify-runtime>
+  olyx help <inspect|login|config|trace|replay|verify-runtime>
   olyx --version
+  olyx login [--base-url URL]
   olyx inspect [--base-url URL] [--api-key KEY] [--dry-run]
   olyx config [--base-url URL] [--api-key KEY] [--dry-run]
   olyx trace [--metadata JSON] [--local-ref REF] [--base-url URL] [--api-key KEY] [--dry-run]
@@ -58,6 +61,15 @@ Usage:
 
 Print local CLI and private-runtime environment status without making network
 requests.
+"#;
+
+pub(crate) const LOGIN_HELP: &str = r#"olyx login
+
+Usage:
+  olyx login [--base-url URL]
+
+Open the Olyx dashboard login page in your browser. This command does not read
+or print API keys.
 "#;
 
 pub(crate) const CONFIG_HELP: &str = r#"olyx config

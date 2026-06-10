@@ -91,6 +91,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             "secrets_boundary": "customer_environment",
             "core_runtime": runtime_env_status()
         })),
+        Command::Login => open_login(&invocation),
         Command::VerifyRuntime {
             license_path,
             policy_path,
@@ -221,6 +222,66 @@ fn print_json(value: &Value) -> Result<(), CliError> {
     Ok(())
 }
 
+fn open_login(invocation: &Invocation) -> Result<(), CliError> {
+    let url = login_url(&invocation.base_url);
+
+    if invocation.dry_run {
+        return print_json(&json!({
+            "dry_run": true,
+            "command": "login",
+            "url": url
+        }));
+    }
+
+    println!("Opening {url}");
+    if !browser_open(&url) {
+        println!("Could not open a browser automatically. Copy this URL: {url}");
+    }
+    Ok(())
+}
+
+fn login_url(base_url: &str) -> String {
+    format!("{}/login", base_url.trim_end_matches('/'))
+}
+
+fn browser_open(url: &str) -> bool {
+    platform_browser_open(url)
+}
+
+#[cfg(target_os = "macos")]
+fn platform_browser_open(url: &str) -> bool {
+    process::Command::new("open")
+        .arg(url)
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "windows")]
+fn platform_browser_open(url: &str) -> bool {
+    process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_browser_open(url: &str) -> bool {
+    for program in ["xdg-open", "gio", "sensible-browser"] {
+        let mut command = process::Command::new(program);
+        if program == "gio" {
+            command.arg("open");
+        }
+        if command
+            .arg(url)
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            return true;
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +376,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_login_without_api_key() {
+        let invocation = Invocation::parse(vec![
+            "--base-url".into(),
+            "https://app.olyxai.io/".into(),
+            "login".into(),
+            "--dry-run".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(invocation.command, Command::Login);
+        assert_eq!(invocation.base_url, "https://app.olyxai.io");
+        assert!(invocation.api_key.is_none());
+        assert!(invocation.dry_run);
+        assert_eq!(
+            login_url(&invocation.base_url),
+            "https://app.olyxai.io/login"
+        );
+        assert!(require_api_key(&invocation).is_ok());
+    }
+
+    #[test]
     fn parses_command_help_topics() {
         assert_eq!(
             Invocation::parse(vec!["config".into(), "--help".into()])
@@ -327,6 +409,12 @@ mod tests {
                 .unwrap()
                 .command,
             Command::Help(HelpTopic::Inspect)
+        );
+        assert_eq!(
+            Invocation::parse(vec!["login".into(), "--help".into()])
+                .unwrap()
+                .command,
+            Command::Help(HelpTopic::Login)
         );
         assert_eq!(
             Invocation::parse(vec!["trace".into(), "--help".into()])
@@ -355,6 +443,9 @@ mod tests {
 
         let inspect_error = Invocation::parse(vec!["inspect".into(), "extra".into()]).unwrap_err();
         assert!(inspect_error.to_string().contains("usage: olyx inspect"));
+
+        let login_error = Invocation::parse(vec!["login".into(), "extra".into()]).unwrap_err();
+        assert!(login_error.to_string().contains("usage: olyx login"));
     }
 
     #[test]
@@ -579,10 +670,12 @@ mod tests {
     #[test]
     fn help_output_snapshots_are_stable() {
         use crate::help::{
-            CONFIG_HELP, GENERAL_HELP, INSPECT_HELP, REPLAY_HELP, TRACE_HELP, VERIFY_RUNTIME_HELP,
+            CONFIG_HELP, GENERAL_HELP, INSPECT_HELP, LOGIN_HELP, REPLAY_HELP, TRACE_HELP,
+            VERIFY_RUNTIME_HELP,
         };
         assert_eq!(help_text(HelpTopic::General), GENERAL_HELP);
         assert_eq!(help_text(HelpTopic::Inspect), INSPECT_HELP);
+        assert_eq!(help_text(HelpTopic::Login), LOGIN_HELP);
         assert_eq!(help_text(HelpTopic::Config), CONFIG_HELP);
         assert_eq!(help_text(HelpTopic::Trace), TRACE_HELP);
         assert_eq!(help_text(HelpTopic::Replay), REPLAY_HELP);

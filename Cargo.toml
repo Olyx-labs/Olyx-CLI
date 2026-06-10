@@ -1,9 +1,11 @@
 [package]
 name = "olyx-cli"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "Olyx command-line client for local execution and enterprise agent workflows"
 license = "Apache-2.0"
+homepage = "https://olyxai.io"
+repository = "https://github.com/Olyx-labs/Olyx-CLI"
 
 [[bin]]
 name = "olyx"

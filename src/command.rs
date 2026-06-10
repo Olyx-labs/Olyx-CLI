@@ -27,6 +27,7 @@ pub(crate) enum Command {
         public_key_b64: Option<String>,
         public_key_path: Option<String>,
     },
+    Login,
     Inspect,
     Help(HelpTopic),
     Version,
@@ -39,6 +40,7 @@ impl Command {
             Some("help") => parse_help(args),
             Some("config") => parse_fixed_arity_help(args, HelpTopic::Config, Self::Config),
             Some("inspect") => parse_fixed_arity_help(args, HelpTopic::Inspect, Self::Inspect),
+            Some("login") => parse_login(args),
             Some("trace") => parse_trace(args),
             Some("replay") => parse_replay(args),
             Some("verify-runtime") => parse_verify_runtime(args),
@@ -53,6 +55,7 @@ impl Command {
 pub(crate) fn parse_help_topic(raw: &str) -> Result<HelpTopic, CliError> {
     match raw {
         "inspect" => Ok(HelpTopic::Inspect),
+        "login" => Ok(HelpTopic::Login),
         "config" => Ok(HelpTopic::Config),
         "trace" => Ok(HelpTopic::Trace),
         "replay" => Ok(HelpTopic::Replay),
@@ -69,7 +72,7 @@ fn parse_help(args: Vec<String>) -> Result<Command, CliError> {
         [_] => Ok(Command::Help(HelpTopic::General)),
         [_, topic] => Ok(Command::Help(parse_help_topic(topic)?)),
         _ => Err(CliError::usage(
-            "usage: olyx help [inspect|config|trace|replay|verify-runtime]",
+            "usage: olyx help [inspect|login|config|trace|replay|verify-runtime]",
         )),
     }
 }
@@ -96,6 +99,22 @@ fn parse_fixed_arity_help(
         )))
     } else {
         unreachable!()
+    }
+}
+
+fn parse_login(args: Vec<String>) -> Result<Command, CliError> {
+    if args.len() == 1 {
+        Ok(Command::Login)
+    } else if args.len() == 2
+        && args
+            .get(1)
+            .is_some_and(|arg| arg == "--help" || arg == "-h")
+    {
+        Ok(Command::Help(HelpTopic::Login))
+    } else {
+        Err(CliError::usage(
+            "usage: olyx login [--base-url URL] [--dry-run]",
+        ))
     }
 }
 
