@@ -12,7 +12,7 @@ Only the latest release receives security fixes. Update to the current release b
 
 **Do not open a public GitHub issue for a suspected vulnerability.**
 
-Report security issues privately to `mosesnjoroge@olyxai.io` with:
+Report security issues privately to `security@olyxai.io` with:
 
 - A short summary of the issue
 - Affected version (`olyx --version`) and operating system
@@ -37,7 +37,7 @@ This repository covers the public `olyx` CLI command surface and release packagi
 
 **In scope:**
 - Credential leakage through CLI output, error messages, logs, or process arguments
-- Bypass of signed-envelope verification in `olyx verify-runtime`
+- Bypass or spoofing of signed-envelope verification in `olyx inspect` core runtime output
 - Supply chain issues in published release artifacts (checksum, Sigstore bundle, GitHub Actions workflow)
 - Privilege escalation or arbitrary code execution triggered by CLI input
 
@@ -46,7 +46,7 @@ This repository covers the public `olyx` CLI command surface and release packagi
 - Social engineering or phishing attacks
 - Theoretical vulnerabilities without a working proof of concept
 
-Private runtime internals (`olyx-core`), outbound agent internals (`olyx-edge`), cloud-side signing systems, and customer infrastructure are handled privately, but vulnerabilities affecting those areas should still be reported through the same contact.
+Private runtime internals (`olyx-core`), edge node internals (`olyx-edge`), cloud-side signing systems, and customer infrastructure are handled privately, but vulnerabilities affecting those areas should still be reported through the same contact.
 
 ## Sensitive Material
 

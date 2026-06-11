@@ -1,21 +1,18 @@
 # Olyx CLI
 
-`olyx` is the public control-plane CLI for Olyx. It manages trace lifecycle,
-project configuration, and replay coordination against Olyx Cloud.
-
-The complete outbound agent is assembled from three components:
+`olyx` is the open-source control-plane CLI for Olyx. It manages trace
+lifecycle, project configuration, and replay coordination. A single binary
+works for all tiers — the deployment path is controlled by `OLYX_BASE_URL`.
 
 | Component | Visibility | Role |
 | :--- | :--- | :--- |
-| **olyx-cli** (this repo) | Open source | Control plane — trace, complete, replay, config |
-| **olyx-edge** | Private | Data plane — outbound proxy deployed in your infrastructure |
+| **olyx-cli** (this repo) | Open source | Thin client — trace, complete, replay, config |
+| **olyx-edge** | Private | Enterprise data plane — deployed in your infrastructure |
 | **olyx-core** | Private | Cryptographic runtime — license and policy-pack verification |
 
-`olyx-edge` is what your application's `base_url` points to. It applies
-guardrails, rate limiting, and provider routing before forwarding requests to
-the model provider. `olyx-core` verifies that the edge node is running a
-signed, unexpired policy pack before it accepts traffic. The CLI manages the
-trace records that both components write against.
+Point `OLYX_BASE_URL` at `https://app.olyxai.io` for cloud deployments or at
+your `olyx-edge` host for enterprise. Provider keys, raw prompts, and model
+responses stay in your environment in both modes.
 
 - License: [Apache-2.0](LICENSE)
 - Security: [SECURITY.md](SECURITY.md)
@@ -23,17 +20,18 @@ trace records that both components write against.
 
 ## Install
 
-Download the archive for your platform from the latest GitHub Release. Verify
-the checksum before installing.
+Download the archive for your platform from the [latest GitHub Release](https://github.com/Olyx-labs/Olyx-CLI/releases).
+Set `version` to the release tag you want to install, then verify the checksum
+before installing.
 
 ### macOS Apple Silicon
 
 ```sh
-version="v0.1.0"
+version="v0.1.0"  # replace with latest release
 asset="olyx-${version}-aarch64-apple-darwin.tar.gz"
 
-curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
-curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
+curl -fsSLO "https://github.com/Olyx-labs/Olyx-CLI/releases/download/${version}/${asset}"
+curl -fsSLO "https://github.com/Olyx-labs/Olyx-CLI/releases/download/${version}/${asset}.sha256"
 shasum -a 256 -c "${asset}.sha256"
 
 tar -xzf "${asset}"
@@ -44,11 +42,11 @@ olyx --version
 ### macOS Intel
 
 ```sh
-version="v0.1.0"
+version="v0.1.0"  # replace with latest release
 asset="olyx-${version}-x86_64-apple-darwin.tar.gz"
 
-curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
-curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
+curl -fsSLO "https://github.com/Olyx-labs/Olyx-CLI/releases/download/${version}/${asset}"
+curl -fsSLO "https://github.com/Olyx-labs/Olyx-CLI/releases/download/${version}/${asset}.sha256"
 shasum -a 256 -c "${asset}.sha256"
 
 tar -xzf "${asset}"
@@ -61,11 +59,11 @@ olyx --version
 Linux builds are static. They do not require glibc or OpenSSL on the host.
 
 ```sh
-version="v0.1.0"
+version="v0.1.0"  # replace with latest release
 asset="olyx-${version}-x86_64-unknown-linux-musl.tar.gz"
 
-curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
-curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
+curl -fsSLO "https://github.com/Olyx-labs/Olyx-CLI/releases/download/${version}/${asset}"
+curl -fsSLO "https://github.com/Olyx-labs/Olyx-CLI/releases/download/${version}/${asset}.sha256"
 sha256sum -c "${asset}.sha256"
 
 tar -xzf "${asset}"
@@ -76,11 +74,11 @@ olyx --version
 ### Linux arm64
 
 ```sh
-version="v0.1.0"
+version="v0.1.0"  # replace with latest release
 asset="olyx-${version}-aarch64-unknown-linux-musl.tar.gz"
 
-curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}"
-curl -fsSLO "https://github.com/olyxlabs/olyx-cli/releases/download/${version}/${asset}.sha256"
+curl -fsSLO "https://github.com/Olyx-labs/Olyx-CLI/releases/download/${version}/${asset}"
+curl -fsSLO "https://github.com/Olyx-labs/Olyx-CLI/releases/download/${version}/${asset}.sha256"
 sha256sum -c "${asset}.sha256"
 
 tar -xzf "${asset}"
@@ -93,11 +91,11 @@ olyx --version
 Run in PowerShell:
 
 ```powershell
-$version = "v0.1.0"
+$version = "v0.1.0"  # replace with latest release
 $asset = "olyx-$version-x86_64-pc-windows-msvc.zip"
 
-Invoke-WebRequest -Uri "https://github.com/olyxlabs/olyx-cli/releases/download/$version/$asset" -OutFile $asset
-Invoke-WebRequest -Uri "https://github.com/olyxlabs/olyx-cli/releases/download/$version/$asset.sha256" -OutFile "$asset.sha256"
+Invoke-WebRequest -Uri "https://github.com/Olyx-labs/Olyx-CLI/releases/download/$version/$asset" -OutFile $asset
+Invoke-WebRequest -Uri "https://github.com/Olyx-labs/Olyx-CLI/releases/download/$version/$asset.sha256" -OutFile "$asset.sha256"
 
 (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower() + "  " + $asset |
   Compare-Object (Get-Content "$asset.sha256")
@@ -142,7 +140,7 @@ else is identical.
 ```
 OLYX_BASE_URL=https://app.olyxai.io
 
-Your app  →  Olyx Cloud (/v1/chat/completions — model proxy)
+Your app  →  model provider (direct — provider secrets stay in your env)
 olyx-cli  →  Olyx Cloud (/api/v1/* — trace, complete, replay, config)
 ```
 
@@ -162,7 +160,8 @@ olyx-cli  →  olyx-edge (/api/v1/*)
              (optional) Olyx Cloud sync via OLYX_CLOUD_SYNC_URL
 ```
 
-Your application's `base_url` change is the same in both cases:
+For enterprise, change your application's provider client to route through the
+edge node:
 
 ```python
 client = ProviderAI(
@@ -218,13 +217,19 @@ Example output:
   "base_url": "https://app.olyxai.io",
   "api_key_present": true,
   "dry_run": false,
-  "secrets_boundary": "customer_environment"
+  "secrets_boundary": "customer_environment",
+  "core_runtime": {
+    "license_path_present": false,
+    "policy_pack_path_present": false,
+    "key_id_present": false,
+    "public_key_present": false
+  }
 }
 ```
 
 ### `olyx config`
 
-Fetches project configuration from Olyx Cloud.
+Fetches project configuration from the Olyx backend.
 
 ```sh
 olyx config
@@ -244,7 +249,7 @@ keys stay in your application environment.
 
 ### `olyx trace`
 
-Sends trace metadata to Olyx Cloud before the model call.
+Sends trace metadata to the Olyx backend before the model call.
 
 ```sh
 olyx trace --metadata '{
