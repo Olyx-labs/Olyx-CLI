@@ -1,6 +1,21 @@
 # Olyx CLI
 
-`olyx` is the command-line tool for managing Olyx from the command line.
+`olyx` is the public control-plane CLI for Olyx. It manages trace lifecycle,
+project configuration, and replay coordination against Olyx Cloud.
+
+The complete outbound agent is assembled from three components:
+
+| Component | Visibility | Role |
+| :--- | :--- | :--- |
+| **olyx-cli** (this repo) | Open source | Control plane — trace, complete, replay, config |
+| **olyx-edge** | Private | Data plane — outbound proxy deployed in your infrastructure |
+| **olyx-core** | Private | Cryptographic runtime — license and policy-pack verification |
+
+`olyx-edge` is what your application's `base_url` points to. It applies
+guardrails, rate limiting, and provider routing before forwarding requests to
+the model provider. `olyx-core` verifies that the edge node is running a
+signed, unexpired policy pack before it accepts traffic. The CLI manages the
+trace records that both components write against.
 
 - License: [Apache-2.0](LICENSE)
 - Security: [SECURITY.md](SECURITY.md)
@@ -94,7 +109,7 @@ olyx --version
 
 ### Verify Provenance
 
-Each release archive also includes a Sigstore bundle.
+Each release archive includes a Sigstore bundle.
 
 ```sh
 cosign verify-blob \
@@ -108,7 +123,6 @@ cosign verify-blob \
 
 ```sh
 export OLYX_API_KEY="ak_..."
-export OLYX_BASE_URL="https://app.olyxai.io"
 
 olyx inspect
 olyx config
@@ -117,28 +131,49 @@ olyx trace --metadata '{"environment":"production","service":"checkout","operati
 
 `OLYX_BASE_URL` defaults to `https://app.olyxai.io`.
 
-## How Olyx Fits Your Model Calls
+## How It Fits Together
 
-Your application still owns the model call. Olyx sits in the request path as the
-control plane.
+The CLI is a stateless thin client. `OLYX_BASE_URL` is the only knob — point
+it at Olyx Cloud for SaaS, or at an `olyx-edge` node for enterprise. Everything
+else is identical.
 
-Before:
+**Cloud**
 
-```python
-client = ProviderAI(api_key=os.environ["PROVIDER_API_KEY"])
+```
+OLYX_BASE_URL=https://app.olyxai.io
+
+Your app  →  Olyx Cloud (/v1/chat/completions — model proxy)
+olyx-cli  →  Olyx Cloud (/api/v1/* — trace, complete, replay, config)
 ```
 
-After:
+**Enterprise (self-hosted edge)**
+
+```
+OLYX_BASE_URL=https://olyx-edge.internal
+
+Your app  →  olyx-edge (/v1/chat/completions)
+                ↓  guardrails, rate limiting, provider routing
+                ↓  verified by olyx-core (signed license + policy pack)
+             model provider
+
+olyx-cli  →  olyx-edge (/api/v1/*)
+                ↓  config, traces, complete, replay served locally
+                ↓  no Olyx Cloud communication required
+             (optional) Olyx Cloud sync via OLYX_CLOUD_SYNC_URL
+```
+
+Your application's `base_url` change is the same in both cases:
 
 ```python
 client = ProviderAI(
     api_key=os.environ["PROVIDER_API_KEY"],
-    base_url="https://app.olyxai.io/api/v1"
+    base_url=os.environ["OLYX_BASE_URL"] + "/v1",
 )
 ```
 
-The provider key stays in your environment. Olyx applies your policy rules and
-records the request metadata needed for debugging and replay.
+The provider key never leaves your environment. For enterprise deployments,
+`olyx-edge` is fully air-gapped by default — set `OLYX_CLOUD_SYNC_URL` only
+if you want trace events forwarded to Olyx Cloud as a secondary path.
 
 ## Commands
 
@@ -147,10 +182,11 @@ olyx help
 olyx login
 olyx inspect
 olyx config
+olyx config generate --language python
 olyx trace --metadata JSON
 olyx trace --local-ref REF
+olyx complete TRACE_ID
 olyx replay TRACE_ID
-olyx verify-runtime --license PATH --policy PATH --key-id KID --public-key-file PATH
 ```
 
 ### `olyx login`
@@ -159,12 +195,6 @@ Opens the Olyx dashboard sign-in page in your browser.
 
 ```sh
 olyx login
-```
-
-For local or VPC dashboards, point the command at another control-plane URL:
-
-```sh
-olyx login --base-url https://app.olyxai.io
 ```
 
 To print the URL without opening a browser:
@@ -200,28 +230,40 @@ Fetches project configuration from Olyx Cloud.
 olyx config
 ```
 
+Generate copy-paste setup for your application stack:
+
+```sh
+olyx config generate --language python
+olyx config generate --language node --provider anthropic
+olyx config generate --language curl
+```
+
+The generator reads the same `/api/v1/config` contract as `olyx config`, then
+prints environment-variable based setup for the Olyx base URL. Provider API
+keys stay in your application environment.
+
 ### `olyx trace`
 
-Sends trace metadata to Olyx.
+Sends trace metadata to Olyx Cloud before the model call.
 
 ```sh
 olyx trace --metadata '{
   "environment": "production",
   "service": "support-agent",
   "operation": "ticket.reply",
-  "model_provider": "openai",
-  "model": "gpt-4.1-mini",
-  "policy_version": "2026.05.27",
-  "request_id": "req_01HYW7W1R3H8"
+  "model": "gpt-4.1-mini"
 }'
 ```
 
-Use this when Olyx should see request context but not the prompt, model
-response, or provider key.
+When using `olyx-edge`, the edge creates traces automatically as requests pass
+through. Use `olyx trace` directly when you want explicit control over what
+metadata Olyx Cloud receives, or when your application does not route through
+an edge node.
 
 ### `olyx trace --local-ref`
 
-Use a local reference when the full trace lives in your own system.
+Attach an opaque reference to a trace when the full request payload lives in
+your own storage.
 
 ```sh
 olyx trace \
@@ -229,13 +271,24 @@ olyx trace \
   --metadata '{
     "environment": "production",
     "service": "claims-agent",
-    "operation": "claim.review",
-    "replay_mode": "local_reference"
+    "operation": "claim.review"
   }'
 ```
 
 The reference should only resolve inside your environment. Do not use a public
 URL unless you intentionally want that object publicly reachable.
+
+### `olyx complete`
+
+Marks a trace as complete. The server computes cost and latency summaries from
+the recorded steps.
+
+```sh
+olyx complete trace_01HYW8A4Q9F7G9N2M3P4
+```
+
+When routing through `olyx-edge`, the edge sends completion automatically.
+Call this directly when managing traces without an edge node.
 
 ### `olyx replay`
 
@@ -245,9 +298,9 @@ Requests replay coordination for a trace.
 olyx replay trace_01HYW8A4Q9F7G9N2M3P4
 ```
 
-For VPC deployments, replay execution normally happens inside the customer
-environment. Olyx coordinates job state without storing provider secrets,
-prompts, model responses, or private model credentials.
+Replay execution runs inside the customer environment when an edge node is
+present. Olyx Cloud coordinates job state without storing provider secrets,
+prompts, or model responses.
 
 ## Authentication
 
@@ -280,60 +333,6 @@ olyx trace \
 Dry-run output is redacted. Token-like strings and sensitive keys such as
 `api_key`, `authorization`, and `secret` are masked before printing.
 
-## Private Runtime Verification
-
-VPC deployments can activate a private runtime with a signed license and a
-signed policy pack.
-
-```sh
-export OLYX_LICENSE_PATH="./license.olyx.json"
-export OLYX_POLICY_PACK_PATH="./policy-pack.olyx.json"
-export OLYX_POLICY_KEY_ID="olyx-prod-2026-01"
-export OLYX_POLICY_PUBLIC_KEY_PATH="./olyx-prod-2026-01.pub"
-
-olyx verify-runtime
-```
-
-Or pass the files directly:
-
-```sh
-olyx verify-runtime \
-  --license ./license.olyx.json \
-  --policy ./policy-pack.olyx.json \
-  --key-id olyx-prod-2026-01 \
-  --public-key-file ./olyx-prod-2026-01.pub
-```
-
-The runtime blocks and refuses to start if a license or policy pack is missing,
-unsigned, tampered with, expired, signed by the wrong key, bound to the wrong
-project, or not permitted for CLI mode.
-
-Successful verification prints a status object:
-
-```json
-{
-  "active": true,
-  "key_id": "olyx-prod-2026-01",
-  "customer_id": "cus_acme",
-  "project_id": "proj_acme_prod",
-  "policy_id": "pol_acme_prod",
-  "policy_version": "2026.05.27",
-  "runtime_modes": ["cli", "edge"],
-  "policy_rules": 12,
-  "license_expires_at": "2027-05-27T00:00:00Z",
-  "policy_expires_at": "2026-06-03T00:00:00Z"
-}
-```
-
-### Signing Key Rotation
-
-Each signing key has a key ID (`kid`).
-
-For rotation, Olyx issues a new public key and signs future license and policy
-packs with the new `kid`. Update `OLYX_POLICY_KEY_ID` and
-`OLYX_POLICY_PUBLIC_KEY_PATH`, then run `olyx verify-runtime` before deploying
-the new artifacts.
-
 ## API Contract
 
 The CLI uses a JSON API over HTTPS.
@@ -342,6 +341,7 @@ The CLI uses a JSON API over HTTPS.
 | :--- | :--- | :--- |
 | `olyx config` | `GET` | `/api/v1/config` |
 | `olyx trace` | `POST` | `/api/v1/traces` |
+| `olyx complete` | `PATCH` | `/api/v1/traces/:id/complete` |
 | `olyx replay` | `POST` | `/api/v1/replay` |
 
 Every request sends the project key as:
@@ -366,42 +366,39 @@ Errors use this shape:
 - name: Olyx CLI smoke check
   env:
     OLYX_API_KEY: ${{ secrets.OLYX_API_KEY }}
-    OLYX_BASE_URL: https://app.olyxai.io
   run: |
     olyx inspect
     olyx trace --metadata '{"environment":"ci","service":"checkout","operation":"deploy.verify"}'
 ```
 
-For VPC deployments, verify the private runtime before deploying:
-
-```yaml
-- name: Verify Olyx private runtime
-  env:
-    OLYX_LICENSE_PATH: ./license.olyx.json
-    OLYX_POLICY_PACK_PATH: ./policy-pack.olyx.json
-    OLYX_POLICY_KEY_ID: olyx-prod-2026-01
-    OLYX_POLICY_PUBLIC_KEY_PATH: ./olyx-prod-2026-01.pub
-  run: olyx verify-runtime
-```
-
 ## Environment Variables
+
+**CLI (all deployments)**
 
 | Variable | Required | Description |
 | :--- | :--- | :--- |
-| `OLYX_BASE_URL` | No | Olyx API URL. Defaults to `https://app.olyxai.io`. |
-| `OLYX_API_KEY` | For cloud calls | Project-scoped Olyx API key. |
-| `OLYX_LICENSE_PATH` | For private runtime | Path to signed license envelope JSON. |
-| `OLYX_POLICY_PACK_PATH` | For private runtime | Path to signed policy-pack envelope JSON. |
-| `OLYX_POLICY_KEY_ID` | For private runtime | Expected Olyx signing key ID. |
-| `OLYX_POLICY_PUBLIC_KEY_B64` | For private runtime | Ed25519 public key as base64url or standard base64. |
-| `OLYX_POLICY_PUBLIC_KEY_PATH` | For private runtime | File containing the Ed25519 public key. |
+| `OLYX_BASE_URL` | No | Olyx endpoint. Cloud: `https://app.olyxai.io` (default). Enterprise: your `olyx-edge` host. |
+| `OLYX_API_KEY` | Yes | Project-scoped Olyx API key. |
+
+**Edge node (enterprise, set on the `olyx-edge` process)**
+
+| Variable | Required | Description |
+| :--- | :--- | :--- |
+| `OLYX_EDGE_NODE_SECRET` | Yes | Node credential issued by Olyx. Format: `en_<id>.<64-hex-secret>`. |
+| `OLYX_GATEWAY_URL` | Yes | Upstream model provider gateway URL. |
+| `OLYX_API_BASE_URL` | Yes | Olyx API URL for edge config and heartbeat. |
+| `OLYX_CLOUD_SYNC_URL` | No | If set, trace events are forwarded to Olyx Cloud as a secondary path. Omit for fully air-gapped operation. |
+| `OLYX_LISTEN_ADDR` | No | Address the edge listens on. Defaults to `0.0.0.0:7878`. |
 
 ## Privacy and Security Boundary
 
-Provider keys, prompts, and model responses stay in your environment. Olyx only
-receives what your project policy allows. For VPC deployments, the private
-runtime handles enforcement locally — nothing is sent to Olyx Cloud unless
-explicitly configured.
+Provider keys, prompts, and model responses stay in your environment. The CLI
+only sends what your project policy allows: trace metadata, local references,
+and trace lifecycle events.
+
+When `olyx-edge` is deployed, policy enforcement and guardrails run inside your
+infrastructure before any data leaves your network. `olyx-core` ensures the
+edge node cannot operate with an unsigned, tampered, or expired policy pack.
 
 ## Release Channels
 
@@ -419,16 +416,16 @@ steps — no third-party action wrappers.
 ## Local Development
 
 ```sh
-cargo build -p olyx-cli --bin olyx --release
+cargo build --bin olyx --release
 ./target/release/olyx help
 ```
 
 Quality checks (run these before opening a patch):
 
 ```sh
-cargo fmt --package olyx-cli -- --check
-cargo clippy -p olyx-cli --all-targets -- -D warnings
-cargo test -p olyx-cli
+cargo fmt -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 cargo deny --config deny.toml check advisories licenses bans sources
 ```
 

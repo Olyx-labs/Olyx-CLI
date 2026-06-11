@@ -5,15 +5,13 @@ mod error;
 mod help;
 mod http;
 mod redact;
-mod runtime;
 
 use command::Command;
 use error::CliError;
 use help::help_text;
 use http::{api_key_present, normalize_base_url, request_json};
 use redact::sanitize_json_for_output;
-use runtime::{runtime_env_status, verify_runtime};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{env, process};
 
 const DEFAULT_BASE_URL: &str = "https://app.olyxai.io";
@@ -28,12 +26,14 @@ async fn main() {
 }
 
 async fn run(args: Vec<String>) -> Result<(), CliError> {
-    // Keep the top-level dispatcher thin: parse once, then hand off to a
-    // single command-specific branch so the public CLI remains easy to read.
     let invocation = Invocation::parse(args)?;
     if matches!(
         &invocation.command,
-        Command::Config | Command::Trace { .. } | Command::Replay { .. }
+        Command::Config
+            | Command::ConfigGenerate { .. }
+            | Command::Trace { .. }
+            | Command::Complete { .. }
+            | Command::Replay { .. }
     ) {
         require_api_key(&invocation)?;
     }
@@ -51,6 +51,26 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             .await?;
             print_json(&response)
         }
+        Command::ConfigGenerate { language, provider } => {
+            let response = request_json(
+                "GET",
+                &invocation.base_url,
+                "/api/v1/config",
+                invocation.api_key.as_deref(),
+                None,
+                invocation.dry_run,
+            )
+            .await?;
+            if invocation.dry_run {
+                return print_json(&response);
+            }
+            print_config_template(
+                &response,
+                &language,
+                provider.as_deref(),
+                &invocation.base_url,
+            )
+        }
         Command::Trace {
             metadata,
             local_ref,
@@ -66,6 +86,19 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
                 "/api/v1/traces",
                 invocation.api_key.as_deref(),
                 Some(&body),
+                invocation.dry_run,
+            )
+            .await?;
+            print_json(&response)
+        }
+        Command::Complete { trace_id } => {
+            let path = format!("/api/v1/traces/{}/complete", trace_id);
+            let response = request_json(
+                "PATCH",
+                &invocation.base_url,
+                &path,
+                invocation.api_key.as_deref(),
+                None,
                 invocation.dry_run,
             )
             .await?;
@@ -92,22 +125,6 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             "core_runtime": runtime_env_status()
         })),
         Command::Login => open_login(&invocation),
-        Command::VerifyRuntime {
-            license_path,
-            policy_path,
-            key_id,
-            public_key_b64,
-            public_key_path,
-        } => {
-            let status = verify_runtime(
-                license_path.as_deref(),
-                policy_path.as_deref(),
-                key_id.as_deref(),
-                public_key_b64.as_deref(),
-                public_key_path.as_deref(),
-            )?;
-            print_json(&serde_json::to_value(status).map_err(|e| CliError::message(e.to_string()))?)
-        }
         Command::Help(topic) => {
             println!("{}", help_text(topic));
             Ok(())
@@ -117,6 +134,16 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             Ok(())
         }
     }
+}
+
+fn runtime_env_status() -> Value {
+    json!({
+        "license_path_present": env::var("OLYX_LICENSE_PATH").is_ok(),
+        "policy_pack_path_present": env::var("OLYX_POLICY_PACK_PATH").is_ok(),
+        "key_id_present": env::var("OLYX_POLICY_KEY_ID").is_ok(),
+        "public_key_present": env::var("OLYX_POLICY_PUBLIC_KEY_B64").is_ok()
+            || env::var("OLYX_POLICY_PUBLIC_KEY_PATH").is_ok(),
+    })
 }
 
 #[derive(Debug, PartialEq)]
@@ -222,6 +249,53 @@ fn print_json(value: &Value) -> Result<(), CliError> {
     Ok(())
 }
 
+fn print_config_template(
+    config: &Value,
+    language: &str,
+    provider: Option<&str>,
+    fallback_base_url: &str,
+) -> Result<(), CliError> {
+    let api_base_url = config
+        .get("base_url")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{}/v1", fallback_base_url.trim_end_matches('/')));
+    let language = language.trim().to_ascii_lowercase();
+    let provider = provider
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("openai")
+        .to_ascii_lowercase();
+
+    let template = match language.as_str() {
+        "curl" | "shell" | "bash" => format!(
+            "export OLYX_API_KEY=ak_...\nexport OLYX_BASE_URL={api_base_url}\n\ncurl \"$OLYX_BASE_URL/config\" \\\n  -H \"Authorization: Bearer $OLYX_API_KEY\""
+        ),
+        "python" => format!(
+            "import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    api_key=os.environ[\"OLYX_API_KEY\"],\n    base_url=\"{api_base_url}\",\n)\n\nresponse = client.chat.completions.create(\n    model=\"frontier-model\",\n    messages=[{{\"role\": \"user\", \"content\": \"Hello from Olyx\"}}],\n)"
+        ),
+        "node" | "typescript" | "javascript" | "js" | "ts" => format!(
+            "import OpenAI from \"openai\";\n\nconst client = new OpenAI({{\n  apiKey: process.env.OLYX_API_KEY,\n  baseURL: \"{api_base_url}\",\n}});\n\nconst response = await client.chat.completions.create({{\n  model: \"frontier-model\",\n  messages: [{{ role: \"user\", content: \"Hello from Olyx\" }}],\n}});"
+        ),
+        "ruby" => format!(
+            "require \"openai\"\n\nclient = OpenAI::Client.new(\n  access_token: ENV.fetch(\"OLYX_API_KEY\"),\n  uri_base: \"{api_base_url}\"\n)\n\nresponse = client.chat(\n  parameters: {{\n    model: \"frontier-model\",\n    messages: [{{ role: \"user\", content: \"Hello from Olyx\" }}]\n  }}\n)"
+        ),
+        "go" | "golang" => format!(
+            "client := openai.NewClientWithConfig(openai.ClientConfig{{\n    BaseURL: \"{api_base_url}\",\n    APIKey:  os.Getenv(\"OLYX_API_KEY\"),\n}})"
+        ),
+        other => {
+            return Err(CliError::usage(format!(
+                "unsupported config language: {other}; supported: curl, python, node, ruby, go"
+            )));
+        }
+    };
+
+    println!("# Olyx config for {language} ({provider})");
+    println!("# Provider secrets stay in your environment.");
+    println!("{template}");
+    Ok(())
+}
+
 fn open_login(invocation: &Invocation) -> Result<(), CliError> {
     let url = login_url(&invocation.base_url);
 
@@ -286,11 +360,8 @@ fn platform_browser_open(url: &str) -> bool {
 mod tests {
     use super::*;
     use crate::help::HelpTopic;
-    use crate::redact::{REDACTED, sanitize_json_for_output, sanitize_text_for_output};
-    use crate::runtime::MAX_SIGNED_ENVELOPE_FILE_BYTES;
+    use crate::redact::{sanitize_json_for_output, sanitize_text_for_output, REDACTED};
 
-    // String concatenation prevents the source literal from matching the
-    // redaction scanner during compilation, keeping test fixtures realistic.
     fn fake_olyx_key() -> String {
         ["ak", "_live_", "1234567890abcdef"].concat()
     }
@@ -328,6 +399,33 @@ mod tests {
                 local_ref: Some("opaque:1".into())
             }
         );
+    }
+
+    #[test]
+    fn parses_config_generate() {
+        let invocation = Invocation::parse(vec![
+            "config".into(),
+            "generate".into(),
+            "--language".into(),
+            "python".into(),
+            "--provider".into(),
+            "anthropic".into(),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            invocation.command,
+            Command::ConfigGenerate {
+                language: "python".into(),
+                provider: Some("anthropic".into())
+            }
+        );
+    }
+
+    #[test]
+    fn config_generate_requires_language() {
+        let error = Invocation::parse(vec!["config".into(), "generate".into()]).unwrap_err();
+        assert!(error.to_string().contains("--language"));
     }
 
     #[test]
@@ -423,16 +521,16 @@ mod tests {
             Command::Help(HelpTopic::Trace)
         );
         assert_eq!(
+            Invocation::parse(vec!["complete".into(), "--help".into()])
+                .unwrap()
+                .command,
+            Command::Help(HelpTopic::Complete)
+        );
+        assert_eq!(
             Invocation::parse(vec!["replay".into(), "--help".into()])
                 .unwrap()
                 .command,
             Command::Help(HelpTopic::Replay)
-        );
-        assert_eq!(
-            Invocation::parse(vec!["verify-runtime".into(), "--help".into()])
-                .unwrap()
-                .command,
-            Command::Help(HelpTopic::VerifyRuntime)
         );
     }
 
@@ -474,36 +572,36 @@ mod tests {
             dry_run: false,
         };
         assert!(require_api_key(&blank_key).is_err());
+
+        let generator = Invocation {
+            command: Command::ConfigGenerate {
+                language: "python".into(),
+                provider: None,
+            },
+            base_url: DEFAULT_BASE_URL.to_string(),
+            api_key: None,
+            dry_run: false,
+        };
+        assert!(require_api_key(&generator).is_err());
     }
 
     #[test]
-    fn signed_envelope_reader_rejects_oversized_files() {
-        let path = std::env::temp_dir().join(format!(
-            "olyx-cli-oversized-envelope-{}-{}.json",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::write(
-            &path,
-            vec![b' '; (MAX_SIGNED_ENVELOPE_FILE_BYTES + 1) as usize],
-        )
-        .unwrap();
+    fn parses_complete() {
+        let invocation =
+            Invocation::parse(vec!["complete".into(), "trace_abc123".into()]).unwrap();
+        assert_eq!(
+            invocation.command,
+            Command::Complete {
+                trace_id: "trace_abc123".into()
+            }
+        );
+    }
 
-        use crate::runtime::verify_runtime;
-        let error = verify_runtime(
-            Some(path.to_str().unwrap()),
-            Some(path.to_str().unwrap()),
-            Some("kid"),
-            Some("key"),
-            None,
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("exceeds"));
-
-        let _ = std::fs::remove_file(path);
+    #[test]
+    fn complete_rejects_oversized_trace_id() {
+        let long_id = "a".repeat(129);
+        let error = Invocation::parse(vec!["complete".into(), long_id]).unwrap_err();
+        assert!(error.to_string().contains("exceeds maximum"));
     }
 
     #[test]
@@ -576,7 +674,6 @@ mod tests {
     #[test]
     fn normalize_base_url_blocks_metadata_endpoints() {
         use crate::http::normalize_base_url;
-        // SSRF: cloud metadata IPs must be rejected even over HTTPS.
         for blocked in &[
             "https://169.254.169.254",
             "https://169.254.169.254/latest/meta-data/",
@@ -589,7 +686,6 @@ mod tests {
                 "{blocked} should be blocked"
             );
         }
-        // Legitimate endpoints must still pass.
         assert!(normalize_base_url("https://app.olyxai.io").is_ok());
         assert!(normalize_base_url("http://localhost:8080").is_ok());
     }
@@ -597,12 +693,10 @@ mod tests {
     #[test]
     fn sanitize_json_does_not_overflow_on_deep_nesting() {
         use crate::redact::sanitize_json_for_output;
-        // Build a 100-level nested object — well past MAX_SANITIZE_DEPTH (32).
         let mut value = json!("leaf");
         for _ in 0..100 {
             value = json!({ "nested": value });
         }
-        // Must return without panic; deep nodes are replaced with REDACTED.
         let sanitized = sanitize_json_for_output(&value);
         assert!(sanitized.is_object());
     }
@@ -670,15 +764,15 @@ mod tests {
     #[test]
     fn help_output_snapshots_are_stable() {
         use crate::help::{
-            CONFIG_HELP, GENERAL_HELP, INSPECT_HELP, LOGIN_HELP, REPLAY_HELP, TRACE_HELP,
-            VERIFY_RUNTIME_HELP,
+            COMPLETE_HELP, CONFIG_HELP, GENERAL_HELP, INSPECT_HELP, LOGIN_HELP, REPLAY_HELP,
+            TRACE_HELP,
         };
         assert_eq!(help_text(HelpTopic::General), GENERAL_HELP);
         assert_eq!(help_text(HelpTopic::Inspect), INSPECT_HELP);
         assert_eq!(help_text(HelpTopic::Login), LOGIN_HELP);
         assert_eq!(help_text(HelpTopic::Config), CONFIG_HELP);
         assert_eq!(help_text(HelpTopic::Trace), TRACE_HELP);
+        assert_eq!(help_text(HelpTopic::Complete), COMPLETE_HELP);
         assert_eq!(help_text(HelpTopic::Replay), REPLAY_HELP);
-        assert_eq!(help_text(HelpTopic::VerifyRuntime), VERIFY_RUNTIME_HELP);
     }
 }

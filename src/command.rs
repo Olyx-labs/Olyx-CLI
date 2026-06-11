@@ -3,9 +3,6 @@ use serde_json::Value;
 use crate::error::CliError;
 use crate::help::HelpTopic;
 
-// Upper bounds on user-supplied string inputs. Real values are much smaller;
-// these limits exist to prevent oversized inputs from consuming memory or
-// appearing verbatim in logs and error messages.
 const MAX_TRACE_ID_BYTES: usize = 128;
 const MAX_LOCAL_REF_BYTES: usize = 512;
 const MAX_METADATA_JSON_BYTES: usize = 65_536;
@@ -13,19 +10,19 @@ const MAX_METADATA_JSON_BYTES: usize = 65_536;
 #[derive(Debug, PartialEq)]
 pub(crate) enum Command {
     Config,
+    ConfigGenerate {
+        language: String,
+        provider: Option<String>,
+    },
     Trace {
         metadata: Option<Value>,
         local_ref: Option<String>,
     },
-    Replay {
+    Complete {
         trace_id: String,
     },
-    VerifyRuntime {
-        license_path: Option<String>,
-        policy_path: Option<String>,
-        key_id: Option<String>,
-        public_key_b64: Option<String>,
-        public_key_path: Option<String>,
+    Replay {
+        trace_id: String,
     },
     Login,
     Inspect,
@@ -38,12 +35,12 @@ impl Command {
         match args.first().map(String::as_str) {
             None => Ok(Self::Help(HelpTopic::General)),
             Some("help") => parse_help(args),
-            Some("config") => parse_fixed_arity_help(args, HelpTopic::Config, Self::Config),
+            Some("config") => parse_config(args),
             Some("inspect") => parse_fixed_arity_help(args, HelpTopic::Inspect, Self::Inspect),
             Some("login") => parse_login(args),
             Some("trace") => parse_trace(args),
+            Some("complete") => parse_complete(args),
             Some("replay") => parse_replay(args),
-            Some("verify-runtime") => parse_verify_runtime(args),
             Some(other) => Err(CliError::usage(format!(
                 "unknown command: {}",
                 redact_argument(other)
@@ -52,14 +49,71 @@ impl Command {
     }
 }
 
+fn parse_config(args: Vec<String>) -> Result<Command, CliError> {
+    if args.len() == 1 {
+        return Ok(Command::Config);
+    }
+
+    if args.len() == 2
+        && args
+            .get(1)
+            .is_some_and(|arg| arg == "--help" || arg == "-h")
+    {
+        return Ok(Command::Help(HelpTopic::Config));
+    }
+
+    if args.get(1).map(String::as_str) != Some("generate") {
+        return Err(CliError::usage(
+            "usage: olyx config [generate --language LANG [--provider PROVIDER]]",
+        ));
+    }
+
+    let mut language = None;
+    let mut provider = None;
+    let mut i = 2;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--language" | "-l" => {
+                i += 1;
+                language = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| CliError::usage("--language requires a value"))?,
+                );
+            }
+            "--provider" | "-p" => {
+                i += 1;
+                provider = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| CliError::usage("--provider requires a value"))?,
+                );
+            }
+            other => {
+                return Err(CliError::usage(format!(
+                    "unknown config generate argument: {other}"
+                )));
+            }
+        }
+        i += 1;
+    }
+
+    let language = language.ok_or_else(|| {
+        CliError::usage("usage: olyx config generate --language LANG [--provider PROVIDER]")
+    })?;
+
+    Ok(Command::ConfigGenerate { language, provider })
+}
+
 pub(crate) fn parse_help_topic(raw: &str) -> Result<HelpTopic, CliError> {
     match raw {
         "inspect" => Ok(HelpTopic::Inspect),
         "login" => Ok(HelpTopic::Login),
         "config" => Ok(HelpTopic::Config),
         "trace" => Ok(HelpTopic::Trace),
+        "complete" => Ok(HelpTopic::Complete),
         "replay" => Ok(HelpTopic::Replay),
-        "verify-runtime" => Ok(HelpTopic::VerifyRuntime),
         other => Err(CliError::usage(format!(
             "unknown help topic: {}",
             redact_argument(other)
@@ -72,7 +126,7 @@ fn parse_help(args: Vec<String>) -> Result<Command, CliError> {
         [_] => Ok(Command::Help(HelpTopic::General)),
         [_, topic] => Ok(Command::Help(parse_help_topic(topic)?)),
         _ => Err(CliError::usage(
-            "usage: olyx help [inspect|login|config|trace|replay|verify-runtime]",
+            "usage: olyx help [inspect|login|config|trace|complete|replay]",
         )),
     }
 }
@@ -82,9 +136,6 @@ fn parse_fixed_arity_help(
     help_topic: HelpTopic,
     command: Command,
 ) -> Result<Command, CliError> {
-    // `config` and `inspect` intentionally have a narrow surface: either the
-    // command itself or a help flag. Extra args are usually typos and should
-    // fail fast instead of being ignored.
     if args.len() == 1 {
         Ok(command)
     } else if args.len() == 2
@@ -172,6 +223,29 @@ fn parse_trace(args: Vec<String>) -> Result<Command, CliError> {
     })
 }
 
+fn parse_complete(args: Vec<String>) -> Result<Command, CliError> {
+    if args.len() == 2
+        && args
+            .get(1)
+            .is_some_and(|arg| arg == "--help" || arg == "-h")
+    {
+        return Ok(Command::Help(HelpTopic::Complete));
+    }
+
+    if args.len() != 2 {
+        return Err(CliError::usage("usage: olyx complete <trace_id>"));
+    }
+
+    let trace_id = args[1].clone();
+    if trace_id.len() > MAX_TRACE_ID_BYTES {
+        return Err(CliError::usage(format!(
+            "trace_id exceeds maximum of {MAX_TRACE_ID_BYTES} bytes"
+        )));
+    }
+
+    Ok(Command::Complete { trace_id })
+}
+
 fn parse_replay(args: Vec<String>) -> Result<Command, CliError> {
     if args.len() == 2
         && args
@@ -193,82 +267,6 @@ fn parse_replay(args: Vec<String>) -> Result<Command, CliError> {
     }
 
     Ok(Command::Replay { trace_id })
-}
-
-fn parse_verify_runtime(args: Vec<String>) -> Result<Command, CliError> {
-    if args.len() == 2
-        && args
-            .get(1)
-            .is_some_and(|arg| arg == "--help" || arg == "-h")
-    {
-        return Ok(Command::Help(HelpTopic::VerifyRuntime));
-    }
-
-    let mut license_path = None;
-    let mut policy_path = None;
-    let mut key_id = None;
-    let mut public_key_b64 = None;
-    let mut public_key_path = None;
-    let mut i = 1;
-
-    while i < args.len() {
-        match args[i].as_str() {
-            "--license" => {
-                i += 1;
-                license_path = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or_else(|| CliError::usage("--license requires a path"))?,
-                );
-            }
-            "--policy" => {
-                i += 1;
-                policy_path = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or_else(|| CliError::usage("--policy requires a path"))?,
-                );
-            }
-            "--key-id" => {
-                i += 1;
-                key_id = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or_else(|| CliError::usage("--key-id requires a value"))?,
-                );
-            }
-            "--public-key-b64" => {
-                i += 1;
-                public_key_b64 = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or_else(|| CliError::usage("--public-key-b64 requires a value"))?,
-                );
-            }
-            "--public-key-file" => {
-                i += 1;
-                public_key_path = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or_else(|| CliError::usage("--public-key-file requires a path"))?,
-                );
-            }
-            other => {
-                return Err(CliError::usage(format!(
-                    "unknown verify-runtime argument: {other}"
-                )));
-            }
-        }
-        i += 1;
-    }
-
-    Ok(Command::VerifyRuntime {
-        license_path,
-        policy_path,
-        key_id,
-        public_key_b64,
-        public_key_path,
-    })
 }
 
 fn redact_argument(raw: &str) -> String {

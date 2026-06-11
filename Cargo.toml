@@ -11,10 +11,15 @@ repository = "https://github.com/Olyx-labs/Olyx-CLI"
 name = "olyx"
 path = "src/main.rs"
 
-[dependencies]
-olyx-core = { workspace = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "z"
+panic = "abort"
+debug = 0
+strip = "symbols"
 
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

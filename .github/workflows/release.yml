@@ -42,18 +42,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout CLI
+      - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          path: release-workspace/olyx-cli
           persist-credentials: false
 
-      - name: Validate release configuration
-        working-directory: release-workspace/olyx-cli
+      - name: Validate release tag vs Cargo.toml version
         shell: bash
-        env:
-          OLYX_CORE_REPOSITORY: ${{ vars.OLYX_CORE_REPOSITORY }}
-          OLYX_CORE_REPO_TOKEN: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
         run: |
           set -euo pipefail
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
@@ -72,72 +67,6 @@ jobs:
               exit 1
             fi
           fi
-          if [[ -z "${OLYX_CORE_REPOSITORY}" ]]; then
-            echo "OLYX_CORE_REPOSITORY must be configured as a GitHub Actions variable" >&2
-            exit 1
-          fi
-          if [[ -z "${OLYX_CORE_REPO_TOKEN}" ]]; then
-            echo "OLYX_CORE_REPO_TOKEN must be configured as a GitHub Actions secret" >&2
-            exit 1
-          fi
-
-      - name: Verify private core credentials
-        shell: bash
-        env:
-          OLYX_CORE_REPOSITORY: ${{ vars.OLYX_CORE_REPOSITORY }}
-          OLYX_CORE_REPO_TOKEN: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
-        run: |
-          set -euo pipefail
-          repo_api="https://api.github.com/repos/${OLYX_CORE_REPOSITORY}"
-          response_file="$(mktemp)"
-          http_status="$(curl -sS -o "${response_file}" -w '%{http_code}' \
-            -H "Authorization: Bearer ${OLYX_CORE_REPO_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "${repo_api}")"
-          if [[ "${http_status}" != "200" ]]; then
-            echo "OLYX_CORE_REPO_TOKEN cannot access ${OLYX_CORE_REPOSITORY}. Provide a valid token with read access to the private core repo." >&2
-            cat "${response_file}" >&2
-            exit 1
-          fi
-          rm -f "${response_file}"
-
-      - name: Checkout private core
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ vars.OLYX_CORE_REPOSITORY }}
-          token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
-          path: release-workspace/Olyx-core
-          persist-credentials: false
-
-      - name: Create release workspace
-        working-directory: release-workspace
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > Cargo.toml <<'TOML'
-          [workspace]
-          members = ["Olyx-core", "olyx-cli"]
-          resolver = "2"
-
-          [workspace.dependencies]
-          aho-corasick = "1.1"
-          regex = "1.10"
-          serde = { version = "1.0", features = ["derive"] }
-          serde_json = "1.0"
-          olyx-core = { path = "Olyx-core" }
-
-          [profile.release]
-          codegen-units = 1
-          lto = "thin"
-          opt-level = "z"
-          panic = "abort"
-          debug = 0
-          strip = "symbols"
-          TOML
-
-      - name: Generate lockfile
-        working-directory: release-workspace
-        run: cargo generate-lockfile
 
       - name: Install Rust
         shell: bash
@@ -146,31 +75,28 @@ jobs:
           rustup default "${RUST_VERSION}"
 
       - name: Cache Cargo
-        uses: actions/cache@v4 # pin to commit SHA before shipping to production
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            release-workspace/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('release-workspace/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Format CLI
-        working-directory: release-workspace
-        run: cargo fmt --package olyx-cli -- --check
+      - name: Format
+        run: cargo fmt -- --check
 
       - name: Clippy
-        working-directory: release-workspace
-        run: cargo clippy --locked -p olyx-cli --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Test
-        working-directory: release-workspace
-        run: cargo test --locked -p olyx-cli -p olyx-core
+        run: cargo test --locked
 
       - name: Cache cargo-deny
-        uses: actions/cache@v4 # pin to commit SHA before shipping to production
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         id: cache-cargo-deny
         with:
           path: ~/.cargo/bin/cargo-deny
@@ -181,8 +107,7 @@ jobs:
         run: cargo install cargo-deny --version "${CARGO_DENY_VERSION}" --locked --quiet
 
       - name: Audit dependencies
-        working-directory: release-workspace
-        run: cargo deny --config olyx-cli/deny.toml check advisories licenses bans sources
+        run: cargo deny --config deny.toml check advisories licenses bans sources
 
   build:
     name: Build ${{ matrix.target }}
@@ -200,88 +125,37 @@ jobs:
             ext: ""
             archive_ext: tar.gz
             cross: true
+            smoke_test: true
           - os: ubuntu-22.04
             target: aarch64-unknown-linux-musl
             ext: ""
             archive_ext: tar.gz
             cross: true
+            smoke_test: false
           - os: macos-15
             target: x86_64-apple-darwin
             ext: ""
             archive_ext: tar.gz
+            cross: false
+            smoke_test: false
           - os: macos-15
             target: aarch64-apple-darwin
             ext: ""
             archive_ext: tar.gz
+            cross: false
+            smoke_test: true
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             ext: .exe
             archive_ext: zip
+            cross: false
+            smoke_test: true
 
     steps:
-      - name: Checkout CLI
+      - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          path: release-workspace/olyx-cli
           persist-credentials: false
-
-      - name: Verify private core credentials
-        shell: bash
-        env:
-          OLYX_CORE_REPOSITORY: ${{ vars.OLYX_CORE_REPOSITORY }}
-          OLYX_CORE_REPO_TOKEN: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
-        run: |
-          set -euo pipefail
-          repo_api="https://api.github.com/repos/${OLYX_CORE_REPOSITORY}"
-          response_file="$(mktemp)"
-          http_status="$(curl -sS -o "${response_file}" -w '%{http_code}' \
-            -H "Authorization: Bearer ${OLYX_CORE_REPO_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "${repo_api}")"
-          if [[ "${http_status}" != "200" ]]; then
-            echo "OLYX_CORE_REPO_TOKEN cannot access ${OLYX_CORE_REPOSITORY}. Provide a valid token with read access to the private core repo." >&2
-            cat "${response_file}" >&2
-            exit 1
-          fi
-          rm -f "${response_file}"
-
-      - name: Checkout private core
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ vars.OLYX_CORE_REPOSITORY }}
-          token: ${{ secrets.OLYX_CORE_REPO_TOKEN }}
-          path: release-workspace/Olyx-core
-          persist-credentials: false
-
-      - name: Create release workspace
-        working-directory: release-workspace
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > Cargo.toml <<'TOML'
-          [workspace]
-          members = ["Olyx-core", "olyx-cli"]
-          resolver = "2"
-
-          [workspace.dependencies]
-          aho-corasick = "1.1"
-          regex = "1.10"
-          serde = { version = "1.0", features = ["derive"] }
-          serde_json = "1.0"
-          olyx-core = { path = "Olyx-core" }
-
-          [profile.release]
-          codegen-units = 1
-          lto = "thin"
-          opt-level = "z"
-          panic = "abort"
-          debug = 0
-          strip = "symbols"
-          TOML
-
-      - name: Generate lockfile
-        working-directory: release-workspace
-        run: cargo generate-lockfile
 
       - name: Install Rust
         shell: bash
@@ -291,21 +165,21 @@ jobs:
           rustup target add ${{ matrix.target }}
 
       - name: Cache Cargo
-        uses: actions/cache@v4 # pin to commit SHA before shipping to production
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            release-workspace/target
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('release-workspace/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-
             ${{ runner.os }}-cargo-
 
       - name: Cache cross
         if: matrix.cross == true
-        uses: actions/cache@v4 # pin to commit SHA before shipping to production
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         id: cache-cross
         with:
           path: ~/.cargo/bin/cross
@@ -359,14 +233,13 @@ jobs:
           fi
 
       - name: Build release binary
-        working-directory: release-workspace
+        shell: bash
         env:
           CARGO_CMD: ${{ matrix.cross == true && 'cross' || 'cargo' }}
-        run: $CARGO_CMD build --locked -p olyx-cli --bin olyx --release --target ${{ matrix.target }}
+        run: $CARGO_CMD build --locked --bin olyx --release --target ${{ matrix.target }}
 
       - name: Smoke test release binary
-        if: matrix.target != 'aarch64-unknown-linux-musl'
-        working-directory: release-workspace
+        if: matrix.smoke_test == true
         shell: bash
         run: |
           set -euo pipefail
@@ -374,10 +247,10 @@ jobs:
           "${binary}" --version | grep -E '^olyx [0-9]+\.[0-9]+\.[0-9]+$'
           "${binary}" help >/dev/null
           "${binary}" help trace >/dev/null
+          "${binary}" help complete >/dev/null
           "${binary}" inspect >/dev/null
 
       - name: Prepare signed artifact
-        working-directory: release-workspace
         shell: bash
         run: |
           set -euo pipefail
@@ -421,7 +294,6 @@ jobs:
           EOF
           fi
           find "dist/${asset}" -maxdepth 2 -type f | sort
-          test ! -e "dist/${asset}/Olyx-core"
           test ! -e "dist/${asset}/src"
           test ! -e "dist/${asset}/Cargo.toml"
           if [[ "${archive_ext}" == "zip" ]]; then
@@ -446,9 +318,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: |
-            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}
-            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}.sha256
-            release-workspace/dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}.bundle
+            dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}
+            dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}.sha256
+            dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}.bundle
 
   release:
     name: Publish GitHub Release
