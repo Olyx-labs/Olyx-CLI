@@ -514,6 +514,16 @@ For ephemeral CI environments where you want to verify request shape without hit
 | `olyx replay TRACE_ID` | `POST` | `/api/v1/replay` |
 | replay poll | `GET` | `/api/v1/replay/:job_id` |
 
+**Enterprise edge node (called by `olyx-edge`, not the CLI directly)**
+
+| Purpose | Method | Endpoint | Auth |
+| :--- | :--- | :--- | :--- |
+| Fetch config on startup | `GET` | `/api/v1/edge/nodes/:id/config` | `EdgeNode <id>.<secret>` |
+| Heartbeat | `POST` | `/api/v1/edge/nodes/:id/heartbeat` | `EdgeNode <id>.<secret>` |
+| Sync audit ledger entries | `POST` | `/api/v1/edge/nodes/:id/audit` | `EdgeNode <id>.<secret>` |
+
+The audit sync endpoint accepts a single entry or a batch (`{ "entries": [...] }`). It is called by the edge binary when `OLYX_CLOUD_SYNC_URL` is configured, enabling the governance ledger for enterprise deployments.
+
 ---
 
 ## Local development
