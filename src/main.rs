@@ -29,10 +29,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
     let invocation = Invocation::parse(args)?;
     if matches!(
         &invocation.command,
-        Command::Config
-            | Command::Trace { .. }
-            | Command::Complete { .. }
-            | Command::Replay { .. }
+        Command::Config | Command::Trace { .. } | Command::Complete { .. } | Command::Replay { .. }
     ) {
         require_api_key(&invocation)?;
     }
@@ -477,13 +474,11 @@ mod tests {
             dry_run: false,
         };
         assert!(require_api_key(&blank_key).is_err());
-
     }
 
     #[test]
     fn parses_complete() {
-        let invocation =
-            Invocation::parse(vec!["complete".into(), "trace_abc123".into()]).unwrap();
+        let invocation = Invocation::parse(vec!["complete".into(), "trace_abc123".into()]).unwrap();
         assert_eq!(
             invocation.command,
             Command::Complete {
