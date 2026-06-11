@@ -12,7 +12,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
   RUST_VERSION: "1.87"
-  CARGO_DENY_VERSION: "0.16.4"
+  CARGO_DENY_VERSION: "0.19.8"
 
 jobs:
   test:
@@ -60,4 +60,4 @@ jobs:
         run: cargo install cargo-deny --version "${CARGO_DENY_VERSION}" --locked --quiet
 
       - name: Audit dependencies
-        run: cargo deny --config deny.toml check advisories licenses bans sources
+        run: cargo deny check --config deny.toml advisories licenses bans sources

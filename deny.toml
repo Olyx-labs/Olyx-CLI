@@ -30,6 +30,7 @@ allow = [
     "OpenSSL",
     "CC0-1.0",
     "Zlib",
+    "CDLA-Permissive-2.0",
 ]
 # Confidence threshold for license text matching.
 confidence-threshold = 0.8
@@ -40,11 +41,7 @@ multiple-versions = "warn"
 # Deny crates known to be wildcards or yanked stubs.
 deny = []
 # Allow multiple versions of crates where the ecosystem commonly ships both.
-skip = [
-    { name = "bitflags", reason = "ecosystem ships v1 and v2 simultaneously" },
-    { name = "syn", reason = "proc-macro crates ship both syn 1 and syn 2" },
-    { name = "base64", reason = "ecosystem transition from 0.21 to 0.22" },
-]
+skip = []
 
 [sources]
 # Only allow dependencies from crates.io and the local workspace path.
