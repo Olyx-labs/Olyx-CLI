@@ -8,7 +8,7 @@ body:
     attributes:
       value: |
         Please keep requests scoped to the public CLI surface.
-        Private runtime internals, outbound-agent internals, and cloud-side policy systems are not tracked publicly here.
+        Private runtime internals, `olyx-edge` internals, and cloud-side policy systems are not tracked publicly here.
   - type: textarea
     id: problem
     attributes:
