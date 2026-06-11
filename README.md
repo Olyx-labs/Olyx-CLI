@@ -181,7 +181,6 @@ olyx help
 olyx login
 olyx inspect
 olyx config
-olyx config generate --language python
 olyx trace --metadata JSON
 olyx trace --local-ref REF
 olyx complete TRACE_ID
@@ -234,18 +233,6 @@ Fetches project configuration from the Olyx backend.
 ```sh
 olyx config
 ```
-
-Generate copy-paste setup for your application stack:
-
-```sh
-olyx config generate --language python
-olyx config generate --language node --provider anthropic
-olyx config generate --language curl
-```
-
-The generator reads the same `/api/v1/config` contract as `olyx config`, then
-prints environment-variable based setup for the Olyx base URL. Provider API
-keys stay in your application environment.
 
 ### `olyx trace`
 

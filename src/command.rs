@@ -10,10 +10,6 @@ const MAX_METADATA_JSON_BYTES: usize = 65_536;
 #[derive(Debug, PartialEq)]
 pub(crate) enum Command {
     Config,
-    ConfigGenerate {
-        language: String,
-        provider: Option<String>,
-    },
     Trace {
         metadata: Option<Value>,
         local_ref: Option<String>,
@@ -62,48 +58,9 @@ fn parse_config(args: Vec<String>) -> Result<Command, CliError> {
         return Ok(Command::Help(HelpTopic::Config));
     }
 
-    if args.get(1).map(String::as_str) != Some("generate") {
-        return Err(CliError::usage(
-            "usage: olyx config [generate --language LANG [--provider PROVIDER]]",
-        ));
-    }
-
-    let mut language = None;
-    let mut provider = None;
-    let mut i = 2;
-
-    while i < args.len() {
-        match args[i].as_str() {
-            "--language" | "-l" => {
-                i += 1;
-                language = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or_else(|| CliError::usage("--language requires a value"))?,
-                );
-            }
-            "--provider" | "-p" => {
-                i += 1;
-                provider = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or_else(|| CliError::usage("--provider requires a value"))?,
-                );
-            }
-            other => {
-                return Err(CliError::usage(format!(
-                    "unknown config generate argument: {other}"
-                )));
-            }
-        }
-        i += 1;
-    }
-
-    let language = language.ok_or_else(|| {
-        CliError::usage("usage: olyx config generate --language LANG [--provider PROVIDER]")
-    })?;
-
-    Ok(Command::ConfigGenerate { language, provider })
+    Err(CliError::usage(
+        "usage: olyx config [--base-url URL] [--api-key KEY] [--dry-run]",
+    ))
 }
 
 pub(crate) fn parse_help_topic(raw: &str) -> Result<HelpTopic, CliError> {

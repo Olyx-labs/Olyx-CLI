@@ -30,7 +30,6 @@ Usage:
   olyx login [--base-url URL]
   olyx inspect [--base-url URL] [--api-key KEY] [--dry-run]
   olyx config [--base-url URL] [--api-key KEY] [--dry-run]
-  olyx config generate --language LANG [--provider PROVIDER] [--base-url URL] [--api-key KEY]
   olyx trace [--metadata JSON] [--local-ref REF] [--base-url URL] [--api-key KEY] [--dry-run]
   olyx complete <trace_id> [--base-url URL] [--api-key KEY] [--dry-run]
   olyx replay <trace_id> [--base-url URL] [--api-key KEY] [--dry-run]
@@ -69,13 +68,9 @@ pub(crate) const CONFIG_HELP: &str = r#"olyx config
 
 Usage:
   olyx config [--base-url URL] [--api-key KEY] [--dry-run]
-  olyx config generate --language LANG [--provider PROVIDER] [--base-url URL] [--api-key KEY]
 
-Fetch the project configuration contract from Olyx Cloud, including distribution,
+Fetch the project configuration contract from Olyx, including distribution,
 guardrails, and replay mode.
-
-Generate prints copy-paste setup for supported languages using the same config
-contract. It never stores provider secrets or API keys.
 "#;
 
 pub(crate) const TRACE_HELP: &str = r#"olyx trace

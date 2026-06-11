@@ -30,7 +30,6 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
     if matches!(
         &invocation.command,
         Command::Config
-            | Command::ConfigGenerate { .. }
             | Command::Trace { .. }
             | Command::Complete { .. }
             | Command::Replay { .. }
@@ -50,26 +49,6 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             )
             .await?;
             print_json(&response)
-        }
-        Command::ConfigGenerate { language, provider } => {
-            let response = request_json(
-                "GET",
-                &invocation.base_url,
-                "/api/v1/config",
-                invocation.api_key.as_deref(),
-                None,
-                invocation.dry_run,
-            )
-            .await?;
-            if invocation.dry_run {
-                return print_json(&response);
-            }
-            print_config_template(
-                &response,
-                &language,
-                provider.as_deref(),
-                &invocation.base_url,
-            )
         }
         Command::Trace {
             metadata,
@@ -249,53 +228,6 @@ fn print_json(value: &Value) -> Result<(), CliError> {
     Ok(())
 }
 
-fn print_config_template(
-    config: &Value,
-    language: &str,
-    provider: Option<&str>,
-    fallback_base_url: &str,
-) -> Result<(), CliError> {
-    let api_base_url = config
-        .get("base_url")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("{}/v1", fallback_base_url.trim_end_matches('/')));
-    let language = language.trim().to_ascii_lowercase();
-    let provider = provider
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("openai")
-        .to_ascii_lowercase();
-
-    let template = match language.as_str() {
-        "curl" | "shell" | "bash" => format!(
-            "export OLYX_API_KEY=ak_...\nexport OLYX_BASE_URL={api_base_url}\n\ncurl \"$OLYX_BASE_URL/config\" \\\n  -H \"Authorization: Bearer $OLYX_API_KEY\""
-        ),
-        "python" => format!(
-            "import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    api_key=os.environ[\"OLYX_API_KEY\"],\n    base_url=\"{api_base_url}\",\n)\n\nresponse = client.chat.completions.create(\n    model=\"frontier-model\",\n    messages=[{{\"role\": \"user\", \"content\": \"Hello from Olyx\"}}],\n)"
-        ),
-        "node" | "typescript" | "javascript" | "js" | "ts" => format!(
-            "import OpenAI from \"openai\";\n\nconst client = new OpenAI({{\n  apiKey: process.env.OLYX_API_KEY,\n  baseURL: \"{api_base_url}\",\n}});\n\nconst response = await client.chat.completions.create({{\n  model: \"frontier-model\",\n  messages: [{{ role: \"user\", content: \"Hello from Olyx\" }}],\n}});"
-        ),
-        "ruby" => format!(
-            "require \"openai\"\n\nclient = OpenAI::Client.new(\n  access_token: ENV.fetch(\"OLYX_API_KEY\"),\n  uri_base: \"{api_base_url}\"\n)\n\nresponse = client.chat(\n  parameters: {{\n    model: \"frontier-model\",\n    messages: [{{ role: \"user\", content: \"Hello from Olyx\" }}]\n  }}\n)"
-        ),
-        "go" | "golang" => format!(
-            "client := openai.NewClientWithConfig(openai.ClientConfig{{\n    BaseURL: \"{api_base_url}\",\n    APIKey:  os.Getenv(\"OLYX_API_KEY\"),\n}})"
-        ),
-        other => {
-            return Err(CliError::usage(format!(
-                "unsupported config language: {other}; supported: curl, python, node, ruby, go"
-            )));
-        }
-    };
-
-    println!("# Olyx config for {language} ({provider})");
-    println!("# Provider secrets stay in your environment.");
-    println!("{template}");
-    Ok(())
-}
-
 fn open_login(invocation: &Invocation) -> Result<(), CliError> {
     let url = login_url(&invocation.base_url);
 
@@ -399,33 +331,6 @@ mod tests {
                 local_ref: Some("opaque:1".into())
             }
         );
-    }
-
-    #[test]
-    fn parses_config_generate() {
-        let invocation = Invocation::parse(vec![
-            "config".into(),
-            "generate".into(),
-            "--language".into(),
-            "python".into(),
-            "--provider".into(),
-            "anthropic".into(),
-        ])
-        .unwrap();
-
-        assert_eq!(
-            invocation.command,
-            Command::ConfigGenerate {
-                language: "python".into(),
-                provider: Some("anthropic".into())
-            }
-        );
-    }
-
-    #[test]
-    fn config_generate_requires_language() {
-        let error = Invocation::parse(vec!["config".into(), "generate".into()]).unwrap_err();
-        assert!(error.to_string().contains("--language"));
     }
 
     #[test]
@@ -573,16 +478,6 @@ mod tests {
         };
         assert!(require_api_key(&blank_key).is_err());
 
-        let generator = Invocation {
-            command: Command::ConfigGenerate {
-                language: "python".into(),
-                provider: None,
-            },
-            base_url: DEFAULT_BASE_URL.to_string(),
-            api_key: None,
-            dry_run: false,
-        };
-        assert!(require_api_key(&generator).is_err());
     }
 
     #[test]
