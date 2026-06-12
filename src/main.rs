@@ -13,6 +13,7 @@ use http::{api_key_present, normalize_base_url, request_json};
 use redact::sanitize_json_for_output;
 use serde_json::{json, Value};
 use std::{env, process};
+use zeroize::Zeroizing;
 
 const DEFAULT_BASE_URL: &str = "https://app.olyxai.io";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -40,7 +41,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
                 "GET",
                 &invocation.base_url,
                 "/api/v1/config",
-                invocation.api_key.as_deref(),
+                invocation.api_key.as_ref().map(|s| s.as_str()),
                 None,
                 invocation.dry_run,
             )
@@ -60,7 +61,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
                 "POST",
                 &invocation.base_url,
                 "/api/v1/traces",
-                invocation.api_key.as_deref(),
+                invocation.api_key.as_ref().map(|s| s.as_str()),
                 Some(&body),
                 invocation.dry_run,
             )
@@ -73,7 +74,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
                 "PATCH",
                 &invocation.base_url,
                 &path,
-                invocation.api_key.as_deref(),
+                invocation.api_key.as_ref().map(|s| s.as_str()),
                 None,
                 invocation.dry_run,
             )
@@ -86,7 +87,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
                 "POST",
                 &invocation.base_url,
                 "/api/v1/replay",
-                invocation.api_key.as_deref(),
+                invocation.api_key.as_ref().map(|s| s.as_str()),
                 Some(&body),
                 invocation.dry_run,
             )
@@ -95,7 +96,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
         }
         Command::Inspect => print_json(&json!({
             "base_url": invocation.base_url,
-            "api_key_present": api_key_present(invocation.api_key.as_deref()),
+            "api_key_present": api_key_present(invocation.api_key.as_ref().map(|s| s.as_str())),
             "dry_run": invocation.dry_run,
             "secrets_boundary": "customer_environment",
             "core_runtime": runtime_env_status()
@@ -126,7 +127,7 @@ fn runtime_env_status() -> Value {
 struct Invocation {
     command: Command,
     base_url: String,
-    api_key: Option<String>,
+    api_key: Option<Zeroizing<String>>,
     dry_run: bool,
 }
 
@@ -136,7 +137,8 @@ impl Invocation {
             env::var("OLYX_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
         let mut api_key = env::var("OLYX_API_KEY")
             .ok()
-            .filter(|s| !s.trim().is_empty());
+            .filter(|s| !s.trim().is_empty())
+            .map(Zeroizing::new);
         let mut dry_run = false;
         let mut positionals = Vec::new();
 
@@ -152,11 +154,11 @@ impl Invocation {
                 }
                 "--api-key" => {
                     i += 1;
-                    api_key = Some(
+                    api_key = Some(Zeroizing::new(
                         args.get(i)
                             .cloned()
                             .ok_or_else(|| CliError::usage("--api-key requires a value"))?,
-                    );
+                    ));
                 }
                 "--dry-run" => dry_run = true,
                 "-h" | "--help" if positionals.is_empty() => {
@@ -188,7 +190,7 @@ impl Invocation {
     fn for_command(
         command: Command,
         base_url: String,
-        api_key: Option<String>,
+        api_key: Option<Zeroizing<String>>,
         dry_run: bool,
     ) -> Result<Self, CliError> {
         let base_url = if matches!(command, Command::Help(_) | Command::Version) {
@@ -207,7 +209,7 @@ impl Invocation {
 }
 
 fn require_api_key(invocation: &Invocation) -> Result<(), CliError> {
-    if api_key_present(invocation.api_key.as_deref()) || invocation.dry_run {
+    if api_key_present(invocation.api_key.as_ref().map(|s| s.as_str())) || invocation.dry_run {
         Ok(())
     } else {
         Err(CliError::usage(
@@ -355,7 +357,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(invocation.base_url, "https://app.olyxai.io");
-        assert_eq!(invocation.api_key.as_deref(), Some("ak_test"));
+        assert_eq!(invocation.api_key.as_ref().map(|s| s.as_str()), Some("ak_test"));
         assert!(invocation.dry_run);
         assert_eq!(
             invocation.command,
@@ -470,7 +472,7 @@ mod tests {
         let blank_key = Invocation {
             command: Command::Config,
             base_url: DEFAULT_BASE_URL.to_string(),
-            api_key: Some("  ".into()),
+            api_key: Some(Zeroizing::new("  ".to_owned())),
             dry_run: false,
         };
         assert!(require_api_key(&blank_key).is_err());
