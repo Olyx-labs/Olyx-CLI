@@ -68,7 +68,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             print_json(&response)
         }
         Command::Complete { trace_id } => {
-            let path = format!("/api/v1/traces/{}/complete", trace_id);
+            let path = format!("/api/v1/traces/{trace_id}/complete");
             let response = request_json(
                 "PATCH",
                 &invocation.base_url,
