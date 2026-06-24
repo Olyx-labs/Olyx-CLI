@@ -182,8 +182,8 @@ olyx-cli  ──▶  olyx-edge (/api/v1/*)
 To route application traffic through an edge node, update your provider client's base URL:
 
 ```python
-# Python — OpenAI SDK
-client = OpenAI(
+# Python — AI Provider SDK
+client = ProviderAI(
     api_key=os.environ["OPENAI_API_KEY"],
     base_url=os.environ["OLYX_BASE_URL"] + "/v1",
 )
@@ -191,16 +191,16 @@ client = OpenAI(
 
 ```typescript
 // TypeScript — OpenAI SDK
-const client = new OpenAI({
+const client = new ProviderAI({
   apiKey: process.env.OPENAI_API_KEY,
   baseURL: process.env.OLYX_BASE_URL + "/v1",
 });
 ```
 
 ```ruby
-# Ruby — OpenAI client
-client = OpenAI::Client.new(
-  access_token: ENV["OPENAI_API_KEY"],
+# Ruby — ProviderAI client
+client = ProviderAI::Client.new(
+  access_token: ENV["ProviderAI_API_KEY"],
   uri_base:     ENV["OLYX_BASE_URL"] + "/v1",
 )
 ```
