@@ -2,6 +2,8 @@
 
 `olyx` is the open-source control-plane CLI for [Olyx](https://olyxai.io) — policy enforcement, intelligent routing, and a tamper-proof audit trail for every AI request. One base URL change. No library to install.
 
+<img width="637" height="415" alt="Screenshot 2026-06-24 at 6 33 19 pm" src="https://github.com/user-attachments/assets/264506fb-76a0-41b4-8f61-b278ce2d82cd" />
+
 ```sh
 export OLYX_API_KEY="ak_..."
 
