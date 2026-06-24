@@ -190,7 +190,7 @@ client = ProviderAI(
 ```
 
 ```typescript
-// TypeScript — OpenAI SDK
+// TypeScript — AI Provider SDK
 const client = new ProviderAI({
   apiKey: process.env.OPENAI_API_KEY,
   baseURL: process.env.OLYX_BASE_URL + "/v1",
