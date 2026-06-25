@@ -154,11 +154,10 @@ impl Invocation {
                 }
                 "--api-key" => {
                     i += 1;
-                    api_key = Some(Zeroizing::new(
-                        args.get(i)
-                            .cloned()
-                            .ok_or_else(|| CliError::usage("--api-key requires a value"))?,
-                    ));
+                    api_key =
+                        Some(Zeroizing::new(args.get(i).cloned().ok_or_else(|| {
+                            CliError::usage("--api-key requires a value")
+                        })?));
                 }
                 "--dry-run" => dry_run = true,
                 "-h" | "--help" if positionals.is_empty() => {
@@ -357,7 +356,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(invocation.base_url, "https://app.olyxai.io");
-        assert_eq!(invocation.api_key.as_ref().map(|s| s.as_str()), Some("ak_test"));
+        assert_eq!(
+            invocation.api_key.as_ref().map(|s| s.as_str()),
+            Some("ak_test")
+        );
         assert!(invocation.dry_run);
         assert_eq!(
             invocation.command,

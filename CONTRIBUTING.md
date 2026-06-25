@@ -76,7 +76,7 @@ All pinned tool versions live as top-level `env:` vars in
 `.github/workflows/release.yml`:
 
 ```yaml
-RUST_VERSION: "1.87"
+RUST_VERSION: "1.88"
 CARGO_DENY_VERSION: "0.16.4"
 COSIGN_VERSION: "2.4.3"
 ```

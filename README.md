@@ -2,11 +2,9 @@
 
 `olyx` is the open-source control-plane CLI for [Olyx](https://olyxai.io) — policy enforcement, intelligent routing, and a tamper-proof audit trail for every AI request. One base URL change. No library to install.
 
----
-<img width="637" height="415" alt="Screenshot 2026-06-24 at 6 33 19 pm" src="https://github.com/user-attachments/assets/264506fb-76a0-41b4-8f61-b278ce2d82cd" />
+The CLI is the fastest path. Every command also maps directly to an HTTP endpoint if you prefer to integrate without installing the binary.
 
----
-
+**CLI**
 ```sh
 export OLYX_API_KEY="ak_..."
 
@@ -17,11 +15,31 @@ olyx complete trace_01J6AF...
 olyx replay  trace_01J6AF...
 ```
 
+**HTTP API** — no install required
+```sh
+export OLYX_API_KEY="ak_..."
+
+curl https://app.olyxai.io/api/v1/config \
+  -H "Authorization: Bearer $OLYX_API_KEY"
+
+curl https://app.olyxai.io/api/v1/traces \
+  -H "Authorization: Bearer $OLYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"metadata":{"service":"checkout","operation":"cart.create"}}'
+
+curl -X PATCH https://app.olyxai.io/api/v1/traces/trace_01J6AF.../complete \
+  -H "Authorization: Bearer $OLYX_API_KEY"
+
+curl https://app.olyxai.io/api/v1/replay \
+  -H "Authorization: Bearer $OLYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"trace_id":"trace_01J6AF..."}'
+```
+
 | Component | Visibility | Role |
 | :--- | :--- | :--- |
-| **olyx-cli** (this repo) | Open source | Thin client — trace, complete, replay, config |
+| **olyx-cli** (this repo) | Open source | Command-line client for tracing, replaying requests, and managing project configuration |
 | **olyx-edge** | Private | Enterprise data plane — deployed inside your infrastructure |
-| **olyx-core** | Private | Cryptographic runtime — license and policy-pack verification |
 
 - License: [Apache-2.0](LICENSE)
 - Security: [SECURITY.md](SECURITY.md)
@@ -151,7 +169,7 @@ cosign verify-blob \
 
 ## How it fits together
 
-The CLI is a stateless thin client. `OLYX_BASE_URL` is the only routing knob — point it at Olyx Cloud for SaaS or at an `olyx-edge` node for enterprise. The commands, flags, and response shapes are identical in both modes.
+The CLI connects to a single endpoint: `OLYX_BASE_URL`. Point it at Olyx Cloud for SaaS or at an `olyx-edge` node for enterprise. The commands, flags, and response shapes are identical in both modes.
 
 **Cloud**
 
@@ -169,7 +187,6 @@ OLYX_BASE_URL=https://olyx-edge.internal
 
 Your app  ──▶  olyx-edge (/v1/chat/completions)
                   │  policy enforcement, PII masking, provider routing
-                  │  signed and verified by olyx-core
                   ▼
                model provider
 
@@ -182,25 +199,25 @@ olyx-cli  ──▶  olyx-edge (/api/v1/*)
 To route application traffic through an edge node, update your provider client's base URL:
 
 ```python
-# Python — AI Provider SDK
-client = ProviderAI(
+# Python — OpenAI SDK
+client = OpenAI(
     api_key=os.environ["OPENAI_API_KEY"],
     base_url=os.environ["OLYX_BASE_URL"] + "/v1",
 )
 ```
 
 ```typescript
-// TypeScript — AI Provider SDK
-const client = new ProviderAI({
+// TypeScript — OpenAI SDK
+const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   baseURL: process.env.OLYX_BASE_URL + "/v1",
 });
 ```
 
 ```ruby
-# Ruby — ProviderAI client
-client = ProviderAI::Client.new(
-  access_token: ENV["ProviderAI_API_KEY"],
+# Ruby — OpenAI client
+client = OpenAI::Client.new(
+  access_token: ENV["OPENAI_API_KEY"],
   uri_base:     ENV["OLYX_BASE_URL"] + "/v1",
 )
 ```
@@ -224,17 +241,11 @@ olyx inspect
   "base_url": "https://app.olyxai.io",
   "api_key_present": true,
   "dry_run": false,
-  "secrets_boundary": "customer_environment",
-  "core_runtime": {
-    "license_path_present": false,
-    "policy_pack_path_present": false,
-    "key_id_present": false,
-    "public_key_present": false
-  }
+  "secrets_boundary": "customer_environment"
 }
 ```
 
-`api_key_present: true` and `secrets_boundary: customer_environment` confirm the CLI is ready. The `core_runtime` fields are relevant only for enterprise edge deployments.
+`api_key_present: true` confirms the key is present. `secrets_boundary: customer_environment` confirms provider credentials are not being sent to Olyx. Enterprise edge deployments show additional runtime fields.
 
 ---
 
@@ -244,20 +255,34 @@ Fetches the active project policy from the control plane.
 
 ```sh
 olyx config
+
+# HTTP equivalent
+curl https://app.olyxai.io/api/v1/config \
+  -H "Authorization: Bearer $OLYX_API_KEY"
 ```
 
 ```json
 {
-  "offline_testing": false,
-  "enterprise_compute": false,
-  "guardrails": { "pii_redaction": true, "content_moderation": false },
-  "runtime_failover": { "enabled": true, "fallback_provider": "anthropic" },
+  "enterprise_compute": {
+    "enabled": false,
+    "mode": "standard"
+  },
+  "guardrails": {
+    "max_input_length": 10000,
+    "pii_threshold": 0.7,
+    "injection_block": true,
+    "secret_action": "alert"
+  },
+  "runtime_failover": {
+    "preferred_runtime": "cloud",
+    "data_boundary": "olyx_cloud",
+    "fail_closed": false
+  },
   "distribution": {
     "distribution_channel": "cli",
     "telemetry_mode": "public",
     "local_ref_required": false
-  },
-  "runtime_activation": { "status": "active" }
+  }
 }
 ```
 
@@ -276,6 +301,19 @@ olyx trace --metadata '{
   "operation":   "ticket.reply",
   "model":       "gpt-4.1-mini"
 }'
+
+# HTTP equivalent
+curl https://app.olyxai.io/api/v1/traces \
+  -H "Authorization: Bearer $OLYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "metadata": {
+      "environment": "production",
+      "service":     "support-agent",
+      "operation":   "ticket.reply",
+      "model":       "gpt-4.1-mini"
+    }
+  }'
 ```
 
 ```json
@@ -313,6 +351,10 @@ Marks a trace as complete. The server computes cost and latency summaries from t
 
 ```sh
 olyx complete trace_01J6AF...
+
+# HTTP equivalent
+curl -X PATCH https://app.olyxai.io/api/v1/traces/trace_01J6AF.../complete \
+  -H "Authorization: Bearer $OLYX_API_KEY"
 ```
 
 When routing through `olyx-edge`, the edge sends completion automatically. Call this directly when managing traces without an edge node.
@@ -325,6 +367,16 @@ Queues a replay job for a completed trace.
 
 ```sh
 olyx replay trace_01J6AF...
+
+# HTTP equivalent
+curl https://app.olyxai.io/api/v1/replay \
+  -H "Authorization: Bearer $OLYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"trace_id":"trace_01J6AF..."}'
+
+# Poll job status
+curl https://app.olyxai.io/api/v1/replay/9f4c2a8d1e7b4a6c \
+  -H "Authorization: Bearer $OLYX_API_KEY"
 ```
 
 ```json
@@ -519,16 +571,6 @@ For ephemeral CI environments where you want to verify request shape without hit
 | `olyx replay TRACE_ID` | `POST` | `/api/v1/replay` |
 | replay poll | `GET` | `/api/v1/replay/:job_id` |
 
-**Enterprise edge node (called by `olyx-edge`, not the CLI directly)**
-
-| Purpose | Method | Endpoint | Auth |
-| :--- | :--- | :--- | :--- |
-| Fetch config on startup | `GET` | `/api/v1/edge/nodes/:id/config` | `EdgeNode <id>.<secret>` |
-| Heartbeat | `POST` | `/api/v1/edge/nodes/:id/heartbeat` | `EdgeNode <id>.<secret>` |
-| Sync audit ledger entries | `POST` | `/api/v1/edge/nodes/:id/audit` | `EdgeNode <id>.<secret>` |
-
-The audit sync endpoint accepts a single entry or a batch (`{ "entries": [...] }`). It is called by the edge binary when `OLYX_CLOUD_SYNC_URL` is configured, enabling the governance ledger for enterprise deployments.
-
 ---
 
 ## Local development
@@ -555,7 +597,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the CI and release pipeline.
 
 The CLI only sends what your project policy permits: trace metadata, local references, and lifecycle events. Provider keys, raw prompts, and model responses stay in your environment in both cloud and enterprise modes.
 
-For enterprise deployments, `olyx-edge` applies policy enforcement and guardrails inside your infrastructure before any data leaves your network. `olyx-core` ensures the edge node cannot operate with an unsigned, tampered, or expired policy pack — built to meet EU AI Act Article 12 record-keeping requirements out of the box.
+For enterprise deployments, `olyx-edge` applies policy enforcement and guardrails inside your infrastructure before any data leaves your network. The edge node verifies it is running a signed, current policy pack before accepting traffic — built to meet EU AI Act Article 12 record-keeping requirements out of the box.
 
 ---
 
