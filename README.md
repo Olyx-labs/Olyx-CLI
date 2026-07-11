@@ -39,7 +39,7 @@ curl https://app.olyxai.io/api/v1/replay \
 | Component | Visibility | Role |
 | :--- | :--- | :--- |
 | **olyx-cli** (this repo) | Open source | Command-line client for tracing, replaying requests, and managing project configuration |
-| **olyx-edge** | Private | Enterprise data plane — deployed inside your infrastructure |
+| **olyx-edge** | Private | Enterprise data preprocessing agent — deployed inside your infrastructure |
 
 - License: [Apache-2.0](LICENSE)
 - Security: [SECURITY.md](SECURITY.md)
