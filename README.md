@@ -597,7 +597,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the CI and release pipeline.
 
 The CLI only sends what your project policy permits: trace metadata, local references, and lifecycle events. Provider keys, raw prompts, and model responses stay in your environment in both cloud and enterprise modes.
 
-For enterprise deployments, `olyx-edge` applies policy enforcement and guardrails inside your infrastructure before any data leaves your network. The edge node verifies it is running a signed, current policy pack before accepting traffic — built to meet EU AI Act Article 12 record-keeping requirements out of the box.
+For enterprise deployments, `olyx-edge` applies policy enforcement and guardrails inside your infrastructure before any data leaves your network. The edge node verifies it is running a signed, current policy pack before accepting traffic.
 
 ---
 
