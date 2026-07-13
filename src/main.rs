@@ -585,6 +585,28 @@ mod tests {
     }
 
     #[test]
+    fn normalize_base_url_blocks_userinfo_bypass() {
+        use crate::http::normalize_base_url;
+        for blocked in &[
+            "https://evil.com@169.254.169.254",
+            "https://x@metadata.google.internal",
+            "https://user:pass@169.254.169.254",
+        ] {
+            assert!(
+                normalize_base_url(blocked).is_err(),
+                "{blocked} should be rejected (userinfo must not smuggle a blocked host past the check)"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_base_url_blocks_bracketed_ipv6_metadata() {
+        use crate::http::normalize_base_url;
+        assert!(normalize_base_url("https://[fd00:ec2:1234::1]").is_err());
+        assert!(normalize_base_url("http://[::1]:9000").is_ok());
+    }
+
+    #[test]
     fn sanitize_json_does_not_overflow_on_deep_nesting() {
         use crate::redact::sanitize_json_for_output;
         let mut value = json!("leaf");

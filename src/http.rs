@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use url::Url;
 
 use crate::error::CliError;
 use crate::redact::{sanitize_json_for_output, sanitize_text_for_output};
@@ -8,44 +9,58 @@ pub(crate) fn api_key_present(api_key: Option<&str>) -> bool {
 }
 
 pub(crate) fn normalize_base_url(raw: &str) -> Result<String, CliError> {
-    let trimmed = raw.trim().trim_end_matches('/');
-    if trimmed.starts_with("https://") {
-        let host = extract_host(trimmed.trim_start_matches("https://"));
-        if is_ssrf_blocked_host(host) {
+    // Parsed with the same `url` crate reqwest uses to dispatch requests, so the
+    // host we validate here is guaranteed to match the host reqwest actually
+    // connects to — hand-rolled authority splitting previously let userinfo
+    // (`user@host`) and bracketed IPv6 literals slip past the SSRF blocklist
+    // while still resolving to the blocked host at request time.
+    let url = Url::parse(raw.trim()).map_err(|_| {
+        CliError::usage(
+            "base URL must start with https:// (or http://localhost for local development)",
+        )
+    })?;
+
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(CliError::usage(
+            "base URL must not contain embedded credentials (user@host); pass the API key via OLYX_API_KEY or --api-key instead",
+        ));
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| CliError::usage("base URL must include a host"))?;
+    // host_str() wraps IPv6 literals in brackets; strip them for blocklist matching.
+    let bare_host = host.trim_start_matches('[').trim_end_matches(']');
+
+    match url.scheme() {
+        "https" => {
+            if is_ssrf_blocked_host(bare_host) {
+                return Err(CliError::usage(
+                    "base URL resolves to a blocked address (cloud metadata or link-local range); use the public Olyx Cloud endpoint or a private-deployment hostname",
+                ));
+            }
+        }
+        "http" => {
+            // Allow http only for loopback addresses (local development and CI smoke checks).
+            if !matches!(bare_host, "localhost" | "127.0.0.1" | "::1") {
+                return Err(CliError::usage(
+                    "http:// is only permitted for localhost; use https:// for remote endpoints to prevent bearer token exposure",
+                ));
+            }
+        }
+        _ => {
             return Err(CliError::usage(
-                "base URL resolves to a blocked address (cloud metadata or link-local range); use the public Olyx Cloud endpoint or a private-deployment hostname",
+                "base URL must start with https:// (or http://localhost for local development)",
             ));
         }
-        Ok(trimmed.to_string())
-    } else if trimmed.starts_with("http://") {
-        // Allow http only for loopback addresses (local development and CI smoke checks).
-        let host = extract_host(trimmed.trim_start_matches("http://"));
-        if matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
-            Ok(trimmed.to_string())
-        } else {
-            Err(CliError::usage(
-                "http:// is only permitted for localhost; use https:// for remote endpoints to prevent bearer token exposure",
-            ))
-        }
-    } else {
-        Err(CliError::usage(
-            "base URL must start with https:// (or http://localhost for local development)",
-        ))
     }
-}
 
-fn extract_host(authority: &str) -> &str {
-    // Strip path, then strip port. Handles IPv6 literals ([::1]) by leaving them intact.
-    let without_path = authority.split('/').next().unwrap_or("");
-    if without_path.starts_with('[') {
-        // IPv6 literal — return through closing bracket.
-        without_path
-            .find(']')
-            .map(|i| &without_path[..=i])
-            .unwrap_or(without_path)
-    } else {
-        without_path.split(':').next().unwrap_or("")
+    let mut normalized = format!("{}://{host}", url.scheme());
+    if let Some(port) = url.port() {
+        normalized.push(':');
+        normalized.push_str(&port.to_string());
     }
+    Ok(normalized)
 }
 
 fn is_ssrf_blocked_host(host: &str) -> bool {
