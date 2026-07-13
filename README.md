@@ -1,5 +1,9 @@
 # Olyx CLI
 
+[![CI](https://github.com/Olyx-labs/Olyx-CLI/actions/workflows/ci.yml/badge.svg)](https://github.com/Olyx-labs/Olyx-CLI/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Olyx-labs/Olyx-CLI)](https://github.com/Olyx-labs/Olyx-CLI/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 `olyx` is the open-source control-plane CLI for [Olyx](https://olyxai.io) — policy enforcement, intelligent routing, and a tamper-proof audit trail for every AI request. One base URL change. No library to install.
 
 The CLI is the fastest path. Every command also maps directly to an HTTP endpoint if you prefer to integrate without installing the binary.
@@ -55,9 +59,14 @@ curl https://app.olyxai.io/api/v1/replay \
 - [Authentication](#authentication)
 - [Response shapes](#response-shapes)
 - [Error handling](#error-handling)
+- [Exit codes](#exit-codes)
 - [Environment variables](#environment-variables)
+- [Dry run](#dry-run)
 - [CI integration](#ci-integration)
+- [API contract](#api-contract)
 - [Local development](#local-development)
+- [Privacy and security boundary](#privacy-and-security-boundary)
+- [Repository policy](#repository-policy)
 
 ---
 
@@ -241,11 +250,17 @@ olyx inspect
   "base_url": "https://app.olyxai.io",
   "api_key_present": true,
   "dry_run": false,
-  "secrets_boundary": "customer_environment"
+  "secrets_boundary": "customer_environment",
+  "core_runtime": {
+    "license_path_present": false,
+    "policy_pack_path_present": false,
+    "key_id_present": false,
+    "public_key_present": false
+  }
 }
 ```
 
-`api_key_present: true` confirms the key is present. `secrets_boundary: customer_environment` confirms provider credentials are not being sent to Olyx. Enterprise edge deployments show additional runtime fields.
+`api_key_present: true` confirms the key is present. `secrets_boundary: customer_environment` confirms provider credentials are not being sent to Olyx. `core_runtime` reports, without reading their contents, whether the enterprise license and signed policy-pack material referenced by [`OLYX_LICENSE_PATH`, `OLYX_POLICY_PACK_PATH`, `OLYX_POLICY_KEY_ID`, and `OLYX_POLICY_PUBLIC_KEY_B64`/`OLYX_POLICY_PUBLIC_KEY_PATH`](#environment-variables) are configured in this environment — useful for confirming an enterprise host is wired up correctly before it starts taking traffic. On a standard Olyx Cloud setup these are all `false`.
 
 ---
 
@@ -421,6 +436,18 @@ olyx login --dry-run
 
 ---
 
+### `olyx help`, `--version`
+
+```sh
+olyx help                # general usage
+olyx help trace          # per-command usage, e.g. inspect|login|config|trace|complete|replay
+olyx --version           # or -V
+```
+
+Both run offline and never require `OLYX_API_KEY`.
+
+---
+
 ## Authentication
 
 All commands authenticate with a project-scoped API key.
@@ -508,6 +535,18 @@ Retry `503` responses with exponential backoff. Treat `401` and `403` as configu
 
 ---
 
+## Exit codes
+
+| Code | Meaning |
+| :--- | :--- |
+| `0` | Success |
+| `1` | Request failed — network error, non-2xx HTTP response, or an API error body |
+| `2` | Usage error — bad flags, invalid arguments, or a missing `OLYX_API_KEY` |
+
+Scripts and CI steps can branch on these without parsing stderr: treat `2` as a fix-your-invocation error and `1` as a runtime/retry candidate.
+
+---
+
 ## Environment variables
 
 ### CLI (all deployments)
@@ -516,6 +555,18 @@ Retry `503` responses with exponential backoff. Treat `401` and `403` as configu
 | :--- | :--- | :--- | :--- |
 | `OLYX_API_KEY` | Yes | — | Project-scoped API key |
 | `OLYX_BASE_URL` | No | `https://app.olyxai.io` | Control plane endpoint. Set to your `olyx-edge` host for enterprise. |
+
+### CLI (enterprise runtime probes)
+
+These are read locally by `olyx-cli` itself — not sent over the network — and only affect the `core_runtime` block in [`olyx inspect`](#olyx-inspect) output. They let you confirm an enterprise host has its license and policy-pack material in place before wiring up `olyx-edge`.
+
+| Variable | Required | Description |
+| :--- | :--- | :--- |
+| `OLYX_LICENSE_PATH` | No | Path to the enterprise license file |
+| `OLYX_POLICY_PACK_PATH` | No | Path to the signed policy pack |
+| `OLYX_POLICY_KEY_ID` | No | Key ID used to verify the policy pack signature |
+| `OLYX_POLICY_PUBLIC_KEY_B64` | No | Base64-encoded public key for policy-pack verification |
+| `OLYX_POLICY_PUBLIC_KEY_PATH` | No | Path to the public key file, as an alternative to `OLYX_POLICY_PUBLIC_KEY_B64` |
 
 ### Edge node (enterprise — set on the `olyx-edge` process)
 
@@ -539,7 +590,7 @@ olyx trace \
   --metadata '{"environment":"ci","service":"checkout","operation":"smoke"}'
 ```
 
-Dry-run output is redacted — token-like strings and keys named `api_key`, `authorization`, and `secret` are masked before printing.
+All CLI output — dry-run bodies, live responses, and error messages alike — is redacted before printing. See [Output redaction](#output-redaction) for the full scope.
 
 ---
 
@@ -598,6 +649,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the CI and release pipeline.
 The CLI only sends what your project policy permits: trace metadata, local references, and lifecycle events. Provider keys, raw prompts, and model responses stay in your environment in both cloud and enterprise modes.
 
 For enterprise deployments, `olyx-edge` applies policy enforcement and guardrails inside your infrastructure before any data leaves your network. The edge node verifies it is running a signed, current policy pack before accepting traffic — built to meet EU AI Act Article 12 record-keeping requirements out of the box.
+
+### Output redaction
+
+Every string the CLI prints — successful responses, dry-run bodies, and error messages — passes through a redaction filter first, so a copy-pasted terminal log or CI artifact doesn't leak a credential:
+
+- **By key name:** JSON fields such as `api_key`, `access_token`, `refresh_token`, `token`, `secret`, `client_secret`, `authorization`, `password`, `private_key`, `credentials`, `bearer_token`, `x_api_key`, and provider-specific variants (`openai_api_key`, `anthropic_api_key`, `gemini_api_key`) are replaced with `[REDACTED]`, regardless of `camelCase` or `snake_case` spelling.
+- **By value shape:** token-like strings are masked by prefix wherever they appear in text, including `Authorization: Bearer ...` headers — covering Olyx (`ak_`), OpenAI (`sk-`), GitHub (`ghp_`, `gho_`, `ghs_`, `glpat-`), Slack (`xoxb-`, `xoxp-`, `xoxs-`, `xoxa-`), npm (`npm_`), SendGrid (`SG.`), and AWS (`AKIA`, `ASIA`) tokens.
+
+This applies uniformly across cloud and enterprise modes and isn't a `--dry-run`-only behavior.
+
+### SSRF protection on `--base-url` / `OLYX_BASE_URL`
+
+The CLI refuses to send requests, including the bearer token, to cloud-metadata and link-local addresses (`169.254.169.254`, `metadata.google.internal`, `100.100.100.200`, and the broader `169.254.0.0/16` range) even if `OLYX_BASE_URL` is misconfigured to point at one. Plain `http://` is only accepted for `localhost`/`127.0.0.1`/`::1`; every other endpoint must use `https://`.
 
 ---
 
