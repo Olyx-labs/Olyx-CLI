@@ -607,6 +607,25 @@ mod tests {
     }
 
     #[test]
+    fn normalize_base_url_strips_path_without_erroring() {
+        use crate::http::normalize_base_url;
+        // A non-empty path only triggers a stderr warning, not a hard error —
+        // the origin is still normalized and returned.
+        assert_eq!(
+            normalize_base_url("https://app.olyxai.io/olyx").unwrap(),
+            "https://app.olyxai.io"
+        );
+        assert_eq!(
+            normalize_base_url("https://app.olyxai.io").unwrap(),
+            "https://app.olyxai.io"
+        );
+        assert_eq!(
+            normalize_base_url("https://app.olyxai.io/").unwrap(),
+            "https://app.olyxai.io"
+        );
+    }
+
+    #[test]
     fn sanitize_json_does_not_overflow_on_deep_nesting() {
         use crate::redact::sanitize_json_for_output;
         let mut value = json!("leaf");

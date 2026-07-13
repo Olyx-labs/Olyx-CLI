@@ -55,6 +55,13 @@ pub(crate) fn normalize_base_url(raw: &str) -> Result<String, CliError> {
         }
     }
 
+    if url.path() != "/" && !url.path().is_empty() {
+        eprintln!(
+            "warning: OLYX_BASE_URL path component \"{}\" will be ignored; set a bare origin (scheme://host[:port])",
+            url.path()
+        );
+    }
+
     let mut normalized = format!("{}://{host}", url.scheme());
     if let Some(port) = url.port() {
         normalized.push(':');
