@@ -4,6 +4,9 @@
 [![Release](https://img.shields.io/github/v/release/Olyx-labs/Olyx-CLI)](https://github.com/Olyx-labs/Olyx-CLI/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+> [!TIP]
+> Questions about Olyx? Visit [olyxai.io](https://olyxai.io) or open an [issue](https://github.com/Olyx-labs/Olyx-CLI/issues). Security concerns? See [SECURITY.md](SECURITY.md).
+
 `olyx` is the open-source control-plane CLI for [Olyx](https://olyxai.io) — policy enforcement, intelligent routing, and a tamper-proof audit trail for every AI request. One base URL change. No library to install.
 
 The CLI is the fastest path. Every command also maps directly to an HTTP endpoint if you prefer to integrate without installing the binary.
@@ -53,6 +56,7 @@ curl https://app.olyxai.io/api/v1/replay \
 
 ## Contents
 
+- [Requirements](#requirements)
 - [Install](#install)
 - [How it fits together](#how-it-fits-together)
 - [Commands](#commands)
@@ -67,6 +71,16 @@ curl https://app.olyxai.io/api/v1/replay \
 - [Local development](#local-development)
 - [Privacy and security boundary](#privacy-and-security-boundary)
 - [Repository policy](#repository-policy)
+- [Support](#support)
+
+---
+
+## Requirements
+
+- **Supported platforms:** macOS (Intel & Apple Silicon), Linux (x86_64 & arm64), Windows (x86_64)
+- **API key:** project-scoped — run `olyx login` to open the dashboard and generate one
+- **Network:** outbound HTTPS to `app.olyxai.io` (SaaS) or your `olyx-edge` endpoint (enterprise)
+- **Rust (building from source only):** 1.88 or newer
 
 ---
 
@@ -463,7 +477,8 @@ To pass the key for a single command without setting the environment variable:
 olyx config --api-key "ak_..."
 ```
 
-In production, read the key from your secrets manager — do not commit it or echo it in logs.
+> [!WARNING]
+> Never commit `OLYX_API_KEY` to version control or echo it in logs. Read it from a secrets manager (AWS Secrets Manager, GitHub Actions secrets, HashiCorp Vault, etc.) in production.
 
 Every request sends:
 
@@ -614,19 +629,22 @@ For ephemeral CI environments where you want to verify request shape without hit
 
 ## API contract
 
-| Command | Method | Endpoint |
-| :--- | :--- | :--- |
-| `olyx config` | `GET` | `/api/v1/config` |
-| `olyx trace` | `POST` | `/api/v1/traces` |
-| `olyx complete TRACE_ID` | `PATCH` | `/api/v1/traces/:id/complete` |
-| `olyx replay TRACE_ID` | `POST` | `/api/v1/replay` |
-| replay poll | `GET` | `/api/v1/replay/:job_id` |
+| Command | Method | Endpoint | Body |
+| :--- | :--- | :--- | :--- |
+| `olyx config` | `GET` | `/api/v1/config` | — |
+| `olyx trace` | `POST` | `/api/v1/traces` | `{"metadata": {...}}` |
+| `olyx complete TRACE_ID` | `PATCH` | `/api/v1/traces/:id/complete` | — |
+| `olyx replay TRACE_ID` | `POST` | `/api/v1/replay` | `{"trace_id": "..."}` |
+| replay poll | `GET` | `/api/v1/replay/:job_id` | — |
 
 ---
 
 ## Local development
 
 ```sh
+git clone https://github.com/Olyx-labs/Olyx-CLI.git
+cd Olyx-CLI
+
 cargo build --bin olyx --release
 ./target/release/olyx help
 ```
@@ -667,4 +685,16 @@ The CLI refuses to send requests, including the bearer token, to cloud-metadata 
 
 ## Repository policy
 
-Issues are open. External pull requests are closed during the beta period.
+> [!WARNING]
+> External pull requests are closed during the beta period — see [CONTRIBUTING.md](CONTRIBUTING.md) before opening one. Issues are open.
+
+---
+
+## Support
+
+- Documentation and product site: [olyxai.io](https://olyxai.io)
+- Policy field reference: [Policy Schema](https://olyxai.io/docs/v1/policy-schema)
+- Issues and questions: [GitHub Issues](https://github.com/Olyx-labs/Olyx-CLI/issues)
+- Security reports: [SECURITY.md](SECURITY.md)
+
+Versioning follows [SemVer](https://semver.org) — breaking changes land only in major version bumps.
