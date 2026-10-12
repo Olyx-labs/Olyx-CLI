@@ -1,0 +1,19 @@
+[package]
+name = "olyx-local-runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+description = "Local routing, replay, and debug runtime for the public Olyx CLI"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.40", features = ["bundled"] }
+chrono = "0.4"
+anyhow = "1.0.103"
+
+[dev-dependencies]
+axum = "0.7"

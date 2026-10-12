@@ -27,15 +27,87 @@ async fn main() {
 }
 
 async fn run(args: Vec<String>) -> Result<(), CliError> {
+    let mut args = args;
+    let mut local_config = env::var("OLYX_CONFIG").ok();
+    if let Some(index) = args.iter().position(|arg| arg == "--config") {
+        if index + 1 >= args.len() {
+            return Err(CliError::usage("--config needs a file path"));
+        }
+        local_config = Some(args.remove(index + 1));
+        args.remove(index);
+    }
     let invocation = Invocation::parse(args)?;
+    // --config is extracted before normal CLI parsing so it never enters an API body.
+    let local_replay =
+        matches!(invocation.command, Command::Replay { .. }) && local_config.is_some();
     if matches!(
         &invocation.command,
-        Command::Config | Command::Trace { .. } | Command::Complete { .. } | Command::Replay { .. }
-    ) {
+        Command::Config | Command::Trace { .. } | Command::Complete { .. }
+    ) || (matches!(invocation.command, Command::Replay { .. }) && !local_replay)
+    {
         require_api_key(&invocation)?;
     }
 
     match invocation.command {
+        Command::Route { model, input } => {
+            use std::io::Read;
+            let path = local_config.as_deref().unwrap_or("olyx.json");
+            let config = olyx_local_runtime::config::Config::load(path)
+                .map_err(|e| CliError::message(e.to_string()))?;
+            let mut raw = String::new();
+            if input == "-" {
+                std::io::stdin()
+                    .take(config.policy.max_body_bytes as u64 + 1)
+                    .read_to_string(&mut raw)
+                    .map_err(|e| CliError::message(e.to_string()))?;
+            } else {
+                std::fs::File::open(input)
+                    .map_err(|e| CliError::message(e.to_string()))?
+                    .take(config.policy.max_body_bytes as u64 + 1)
+                    .read_to_string(&mut raw)
+                    .map_err(|e| CliError::message(e.to_string()))?;
+            }
+            if raw.len() > config.policy.max_body_bytes {
+                return Err(CliError::message("input_too_large"));
+            }
+            let mut body: Value = serde_json::from_str(&raw)
+                .map_err(|_| CliError::message("input must be a JSON chat request"))?;
+            if !body.is_object() {
+                return Err(CliError::message("input must be a JSON object"));
+            }
+            if let Some(model) = model {
+                body["model"] = json!(model);
+            }
+            if invocation.dry_run {
+                return print_json(&json!({"local":true,"request":body,"config":path}));
+            }
+            let state = olyx_local_runtime::State::new(config)
+                .map_err(|e| CliError::message(e.to_string()))?;
+            let output = state
+                .route(body)
+                .await
+                .map_err(|e| CliError::message(e.to_string()))?;
+            print_json(&output)
+        }
+        Command::Debug { trace_id } => {
+            let config = olyx_local_runtime::config::Config::load(
+                local_config.as_deref().unwrap_or("olyx.json"),
+            )
+            .map_err(|e| CliError::message(e.to_string()))?;
+            let state = olyx_local_runtime::State::new(config)
+                .map_err(|e| CliError::message(e.to_string()))?;
+            let output = state
+                .debug(trace_id.as_deref())
+                .await
+                .map_err(|e| CliError::message(e.to_string()))?;
+            print_json(&output)
+        }
+        Command::Check { config } => {
+            olyx_local_runtime::config::Config::load(&config)
+                .map_err(|e| CliError::message(e.to_string()))?;
+            println!("Local configuration is valid");
+            Ok(())
+        }
         Command::Config => {
             let response = request_json(
                 "GET",
@@ -81,8 +153,35 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             .await?;
             print_json(&response)
         }
-        Command::Replay { trace_id } => {
-            let body = json!({ "trace_id": trace_id });
+        Command::Replay {
+            trace_id,
+            models,
+            force_model,
+            wait,
+        } => {
+            if let Some(path) = local_config {
+                if invocation.dry_run {
+                    return print_json(
+                        &json!({"local":true,"trace_id":trace_id,"compare_models":models,"force_model":force_model}),
+                    );
+                }
+                let config = olyx_local_runtime::config::Config::load(&path)
+                    .map_err(|e| CliError::message(e.to_string()))?;
+                let state = olyx_local_runtime::State::new(config)
+                    .map_err(|e| CliError::message(e.to_string()))?;
+                let output = state
+                    .replay(&trace_id, force_model, models)
+                    .await
+                    .map_err(|e| CliError::message(e.to_string()))?;
+                return print_json(&output);
+            }
+            let mut body = json!({ "trace_id": trace_id });
+            if !models.is_empty() {
+                body["compare_models"] = json!(models);
+            }
+            if let Some(model) = force_model {
+                body["force_model"] = json!(model);
+            }
             let response = request_json(
                 "POST",
                 &invocation.base_url,
@@ -92,6 +191,44 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
                 invocation.dry_run,
             )
             .await?;
+            let mut response = response;
+            if wait && !invocation.dry_run {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+                while matches!(response["status"].as_str(), Some("queued" | "running")) {
+                    if std::time::Instant::now() >= deadline {
+                        return Err(CliError::message("replay still pending after 120 seconds"));
+                    }
+                    let job = response["job_id"]
+                        .as_str()
+                        .ok_or_else(|| CliError::message("queued replay did not return job_id"))?
+                        .to_owned();
+                    if !job
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+                    {
+                        return Err(CliError::message("invalid replay job id"));
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    let result = request_json(
+                        "GET",
+                        &invocation.base_url,
+                        &format!("/api/v1/replay/{job}"),
+                        invocation.api_key.as_ref().map(|s| s.as_str()),
+                        None,
+                        false,
+                    )
+                    .await?;
+                    response = result;
+                    if response.get("job_id").is_none() {
+                        response["job_id"] = json!(job);
+                    }
+                }
+                if response["status"] == "failed" {
+                    return Err(CliError::message(
+                        "replay failed; inspect the backend result",
+                    ));
+                }
+            }
             print_json(&response)
         }
         Command::Inspect => print_json(&json!({

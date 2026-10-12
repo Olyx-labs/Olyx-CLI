@@ -22,3 +22,9 @@ olyx-*.bundle
 # CI build directories
 dist/
 release-workspace/
+
+# Local recorded model payloads
+data/
+*.db
+*.db-wal
+*.db-shm

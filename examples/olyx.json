@@ -1,0 +1,28 @@
+{
+  "database": "../data/traces.db",
+  "models": {
+    "fast": [
+      {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+        "api_key_env": "OPENAI_API_KEY",
+        "input_per_million": 0.0,
+        "output_per_million": 0.0
+      }
+    ],
+    "quality": [
+      {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o",
+        "api_key_env": "OPENAI_API_KEY",
+        "input_per_million": 0.0,
+        "output_per_million": 0.0
+      }
+    ]
+  },
+  "policy": {
+    "max_output_tokens": 1024,
+    "monthly_budget_usd": null,
+    "retention_days": 30
+  }
+}

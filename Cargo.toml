@@ -3,7 +3,7 @@ name = "olyx-cli"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
-description = "Open-source control-plane CLI for Olyx — trace lifecycle, project config, and replay coordination"
+description = "Open-source Olyx CLI — local routing, replay, debugging, and Cloud integration"
 authors = ["Olyx Labs <hello@olyxai.io>"]
 license = "Apache-2.0"
 homepage = "https://olyxai.io"
@@ -25,8 +25,13 @@ debug = 0
 strip = "symbols"
 
 [dependencies]
+olyx-local-runtime = { path = "runtime" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 url = "2.5"
 zeroize = "1"
+
+[workspace]
+members = ["runtime"]
+resolver = "2"
