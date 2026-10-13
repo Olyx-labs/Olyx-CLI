@@ -45,6 +45,7 @@ impl State {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
         {
+            #[cfg(unix)]
             let existed = parent.exists();
             std::fs::create_dir_all(parent)?;
             #[cfg(unix)]

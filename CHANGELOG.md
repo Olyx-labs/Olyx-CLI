@@ -14,6 +14,7 @@
 
 - Added native Anthropic and Gemini adapters, SSE streaming with live NDJSON snapshots, and streamed trace replay.
 
+- Fixed Windows release builds with strict warning checks.
 - Hardened native-stream parsing and release signature identity checks.
 - Patched the optional locked HTTP/3 dependency and corrected the release audit command.
 - Added storage setup and backup instructions to release archives.
