@@ -403,16 +403,27 @@ jobs:
           **Linux / macOS:**
 
           \`\`\`sh
-          asset="olyx-${version}-x86_64-unknown-linux-musl.tar.gz"
-          sha256sum -c "\${asset}.sha256"
+          case "\$(uname -s)/\$(uname -m)" in
+            Linux/x86_64) target=x86_64-unknown-linux-musl ;;
+            Linux/aarch64|Linux/arm64) target=aarch64-unknown-linux-musl ;;
+            Darwin/arm64) target=aarch64-apple-darwin ;;
+            Darwin/x86_64) target=x86_64-apple-darwin ;;
+            *) echo "Unsupported platform" >&2; exit 1 ;;
+          esac
+          asset="olyx-${version}-\${target}.tar.gz"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum -c "\${asset}.sha256"
+          else
+            shasum -a 256 -c "\${asset}.sha256"
+          fi
           cosign verify-blob \\
             --bundle "\${asset}.bundle" \\
             --certificate-identity "${OIDC_IDENTITY}" \\
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
             "\${asset}"
           tar -xzf "\${asset}"
-          install -m 0755 "olyx-${version}-x86_64-unknown-linux-musl/olyx" /usr/local/bin/olyx
-          cd "olyx-${version}-x86_64-unknown-linux-musl"
+          install -m 0755 "olyx-${version}-\${target}/olyx" /usr/local/bin/olyx
+          cd "olyx-${version}-\${target}"
           export OPENAI_API_KEY=your-provider-key
           olyx check examples/olyx.json
           olyx route --config examples/olyx.json --input examples/request.json

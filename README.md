@@ -8,7 +8,8 @@ licenses, Olyx account, or Olyx Cloud connection are required for local commands
 
 Download the archive for your platform from [GitHub Releases](https://github.com/Olyx-labs/Olyx-CLI/releases).
 Each archive contains the binary, examples, LICENSE, NOTICE, and README files.
-Verify the adjacent checksum and Sigstore bundle before running it:
+Install cosign using the [official installation guide](https://docs.sigstore.dev/cosign/system_config/installation/).
+Verify the adjacent checksum and Sigstore bundle before running the binary:
 
 ```sh
 asset=olyx-v0.2.0-aarch64-apple-darwin.tar.gz
