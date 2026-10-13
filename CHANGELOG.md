@@ -14,6 +14,9 @@
 
 - Added native Anthropic and Gemini adapters, SSE streaming with live NDJSON snapshots, and streamed trace replay.
 
+- Hardened native-stream parsing and release signature identity checks.
+- Added storage setup and backup instructions to release archives.
+
 ## 0.1.0
 
 Initial control-plane CLI: inspect, login, config, trace lifecycle, and Cloud replay.

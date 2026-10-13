@@ -331,7 +331,16 @@ impl Stream {
                 }
             }
             Protocol::Anthropic => match v["type"].as_str() {
-                Some("message_start") => self.output = v["message"].clone(),
+                Some("message_start") => {
+                    let message = &v["message"];
+                    if !message.is_object()
+                        || !message["content"].is_array()
+                        || !message["usage"].is_object()
+                    {
+                        return Err(upstream("invalid_stream_event"));
+                    }
+                    self.output = message.clone();
+                }
                 Some("content_block_start") => {
                     let index = v["index"]
                         .as_u64()
@@ -342,6 +351,9 @@ impl Stream {
                         .ok_or_else(|| upstream("invalid_stream_event"))?;
                     if index != blocks.len() {
                         return Err(upstream("invalid_stream_index"));
+                    }
+                    if !v["content_block"].is_object() {
+                        return Err(upstream("invalid_stream_event"));
                     }
                     blocks.push(v["content_block"].clone());
                 }
@@ -550,6 +562,35 @@ mod tests {
             "{\"city\":\"Toronto\"}"
         );
     }
+    #[test]
+    fn malformed_anthropic_events_return_errors_without_panicking() {
+        for message in [
+            json!(42),
+            json!({"content":[],"usage":"invalid"}),
+            json!({"content":null,"usage":{}}),
+        ] {
+            let mut stream = Stream::new(Protocol::Anthropic);
+            assert_eq!(
+                stream
+                    .event(&json!({"type":"message_start","message":message}).to_string())
+                    .unwrap_err()
+                    .code,
+                "invalid_stream_event"
+            );
+        }
+        let mut stream = Stream::new(Protocol::Anthropic);
+        assert_eq!(
+            stream
+                .event(
+                    &json!({"type":"content_block_start","index":0,"content_block":"invalid"})
+                        .to_string()
+                )
+                .unwrap_err()
+                .code,
+            "invalid_stream_event"
+        );
+    }
+
     #[test]
     fn anthropic_tool_json_and_thinking_signatures_are_preserved() {
         let mut stream = Stream::new(Protocol::Anthropic);

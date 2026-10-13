@@ -6,7 +6,7 @@ the beta period; prepare patches only when invited. Report security issues priva
 using [SECURITY.md](SECURITY.md).
 
 Keep command help, examples, and tests in sync. Tests should use local mock
-providers; never require paid credentials or private Olyx repositories.
+providers; never require live credentials or private Olyx repositories.
 Do not commit customer payloads, provider keys, signing keys, or proprietary
 enterprise modules. The public source is Apache-2.0.
 

@@ -15,6 +15,7 @@ The crates are intentionally not published to crates.io.
    manually with `release_tag=v0.2.0-rehearsal` and `rehearsal=true`.
 6. Review artifacts for all five targets, their checksums and Sigstore bundles,
    and the packaged examples, LICENSE, NOTICE, and documentation.
+   Verify that the release smoke tests cover streamed routing and native providers.
 
 A manual workflow run builds and verifies artifacts but does not publish a release.
 No private repository token is required. The workflow uses GitHub's token and OIDC
@@ -30,3 +31,10 @@ visibility, push commits/tags, or publish artifacts.
 
 Consumers should verify the adjacent checksum and Sigstore bundle before running
 a release binary. See README for installation and local usage.
+
+## Readiness boundaries
+
+A successful local check does not replace the five-target signed GitHub rehearsal.
+The source and artifacts must pass that rehearsal before creating the release tag.
+Confirm repository visibility with `gh repo view --json visibility` before sharing
+public installation links. A private repository's links are unavailable to the public.

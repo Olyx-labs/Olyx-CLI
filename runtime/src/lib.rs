@@ -95,6 +95,12 @@ impl State {
         {
             return Err(failure(StatusCode::BAD_REQUEST, "messages_required"));
         }
+        if body
+            .get("stream")
+            .is_some_and(|stream| !stream.is_boolean())
+        {
+            return Err(failure(StatusCode::BAD_REQUEST, "invalid_stream_option"));
+        }
         let text = body.to_string();
         if text.len() > self.config.policy.max_body_bytes {
             return Err(failure(StatusCode::PAYLOAD_TOO_LARGE, "input_too_large"));

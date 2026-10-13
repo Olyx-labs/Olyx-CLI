@@ -21,7 +21,7 @@ def main():
             files = [entry.name for entry in bundle.getmembers() if entry.isfile()]
             assert all(entry.isfile() or entry.isdir() for entry in bundle.getmembers()), "unexpected archive member type"
     required = {f"{root}/{name}" for name in ["olyx.exe" if windows else "olyx", "LICENSE", "NOTICE",
-                "README.md", "README.txt", "examples/olyx.json", "examples/request.json"]}
+                "README.md", "README.txt", "examples/olyx.json", "examples/request.json", "docs/storage.md"]}
     assert set(files) == required, "archive contents do not match the public release allowlist"
     assert all(".." not in PurePosixPath(name).parts and not PurePosixPath(name).is_absolute() for name in files)
     print(f"Archive and checksum verified: {archive.name}")

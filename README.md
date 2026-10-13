@@ -14,7 +14,7 @@ Verify the adjacent checksum and Sigstore bundle before running it:
 asset=olyx-v0.2.0-aarch64-apple-darwin.tar.gz
 shasum -a 256 -c "$asset.sha256"
 cosign verify-blob --bundle "$asset.bundle" \
-  --certificate-identity-regexp 'https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' \
+  --certificate-identity 'https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@refs/tags/v0.2.0' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com "$asset"
 tar -xzf "$asset"
 cd olyx-v0.2.0-aarch64-apple-darwin
@@ -96,6 +96,9 @@ protocol; use common text messages for comparisons across providers. Tool calls 
 
 ## Configuration and storage
 
+See [Database and storage setup](docs/storage.md) for durable/in-memory options,
+retention, permissions, backup, and restore.
+
 See [examples/olyx.json](examples/olyx.json). URLs require HTTPS except for
 loopback endpoints. List additional providers under an alias to configure
 fallbacks. `check FILE` validates configuration without requiring credentials.
@@ -107,8 +110,7 @@ cloud sync. Keep the database private. CLI output masks recognizable credentials
 Routing and replay preserve prompt and response content. Request-size and
 output-token limits validate requests; they do not scan or redact content.
 
-Hosted allowances do not apply to
-local execution. You pay your provider and supply your own storage and compute.
+Local execution uses your provider credentials, storage, and compute.
 
 ## Existing Cloud commands
 
@@ -145,6 +147,7 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 cargo deny check --config deny.toml advisories licenses bans sources
+python3 scripts/smoke-local.py target/release/olyx
 ```
 
 Supported release targets: Linux x86_64/arm64, macOS Intel/Apple Silicon, and
