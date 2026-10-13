@@ -39,8 +39,15 @@ jobs:
         run: cargo test --locked --workspace
 
 
+      - name: Build and smoke test the public CLI
+        run: |
+          cargo build --locked --bin olyx
+          python3 scripts/smoke-local.py target/debug/olyx
+
       - name: Install cargo-deny
-        run: cargo install cargo-deny --version "${CARGO_DENY_VERSION}" --locked --quiet
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          cargo +stable install cargo-deny --version "${CARGO_DENY_VERSION}" --locked --quiet
 
       - name: Audit dependencies
         run: cargo deny check --config deny.toml advisories licenses bans sources

@@ -4,7 +4,8 @@
 
 | Version | Supported |
 | :--- | :--- |
-| 0.1.x (current) | Yes |
+| 0.2.x (prepared next release) | Yes |
+| 0.1.x (latest published release) | Yes |
 
 Only the latest release receives security fixes. Update to the current release before reporting.
 
@@ -33,11 +34,12 @@ We will credit researchers who report valid vulnerabilities unless they prefer t
 
 ## Scope
 
-This repository covers the public `olyx` CLI command surface and release packaging.
+This repository covers local routing, replay/comparison, trace debugging, optional
+Cloud commands, and release packaging. It contains no enterprise activation code.
 
 **In scope:**
 - Credential leakage through CLI output, error messages, logs, or process arguments
-- Bypass or spoofing of signed-envelope verification in `olyx inspect` core runtime output
+- Provider credential forwarding, local trace file permissions, and replay isolation
 - Supply chain issues in published release artifacts (checksum, Sigstore bundle, GitHub Actions workflow)
 - Privilege escalation or arbitrary code execution triggered by CLI input
 

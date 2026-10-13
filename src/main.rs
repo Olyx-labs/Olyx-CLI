@@ -83,11 +83,34 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             }
             let state = olyx_local_runtime::State::new(config)
                 .map_err(|e| CliError::message(e.to_string()))?;
+            let streaming = body["stream"].as_bool() == Some(true);
             let output = state
-                .route(body)
+                .route_with_events(body, &mut |event| {
+                    use std::io::Write;
+                    let mut stdout = std::io::stdout().lock();
+                    let result =
+                        serde_json::to_writer(&mut stdout, &sanitize_json_for_output(&event))
+                            .map_err(std::io::Error::other)
+                            .and_then(|_| stdout.write_all(b"\n"))
+                            .and_then(|_| stdout.flush());
+                    result.map_err(|_| olyx_local_runtime::Failure {
+                        status: 500,
+                        code: "output_write_failed".into(),
+                    })
+                })
                 .await
                 .map_err(|e| CliError::message(e.to_string()))?;
-            print_json(&output)
+            if streaming {
+                println!(
+                    "{}",
+                    sanitize_json_for_output(
+                        &json!({"type":"completed","trace_id":output["trace_id"],"output":output["output"]})
+                    )
+                );
+                Ok(())
+            } else {
+                print_json(&output)
+            }
         }
         Command::Debug { trace_id } => {
             let config = olyx_local_runtime::config::Config::load(
@@ -236,7 +259,7 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             "api_key_present": api_key_present(invocation.api_key.as_ref().map(|s| s.as_str())),
             "dry_run": invocation.dry_run,
             "secrets_boundary": "customer_environment",
-            "core_runtime": runtime_env_status()
+            "local_config": local_config
         })),
         Command::Login => open_login(&invocation),
         Command::Help(topic) => {
@@ -248,16 +271,6 @@ async fn run(args: Vec<String>) -> Result<(), CliError> {
             Ok(())
         }
     }
-}
-
-fn runtime_env_status() -> Value {
-    json!({
-        "license_path_present": env::var("OLYX_LICENSE_PATH").is_ok(),
-        "policy_pack_path_present": env::var("OLYX_POLICY_PACK_PATH").is_ok(),
-        "key_id_present": env::var("OLYX_POLICY_KEY_ID").is_ok(),
-        "public_key_present": env::var("OLYX_POLICY_PUBLIC_KEY_B64").is_ok()
-            || env::var("OLYX_POLICY_PUBLIC_KEY_PATH").is_ok(),
-    })
 }
 
 #[derive(Debug, PartialEq)]

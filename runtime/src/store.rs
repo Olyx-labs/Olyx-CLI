@@ -9,6 +9,22 @@ pub struct Store(pub Connection);
 
 impl Store {
     pub fn open(path: &str) -> Result<Self> {
+        #[cfg(unix)]
+        if path != ":memory:" {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(0o600)
+                .open(path)?;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+            for suffix in ["-wal", "-shm"] {
+                let journal = format!("{path}{suffix}");
+                if std::path::Path::new(&journal).exists() {
+                    std::fs::set_permissions(journal, std::fs::Permissions::from_mode(0o600))?;
+                }
+            }
+        }
         let connection = Connection::open(path)?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;

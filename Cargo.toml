@@ -1,11 +1,12 @@
 [package]
 name = "olyx-cli"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Open-source Olyx CLI — local routing, replay, debugging, and Cloud integration"
 authors = ["Olyx Labs <hello@olyxai.io>"]
 license = "Apache-2.0"
+publish = false
 homepage = "https://olyxai.io"
 repository = "https://github.com/Olyx-labs/Olyx-CLI"
 readme = "README.md"

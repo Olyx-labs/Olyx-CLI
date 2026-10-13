@@ -9,7 +9,7 @@ on:
       release_tag:
         description: "Tag name to use for the rehearsal artifact set"
         required: true
-        default: "v0.1.0-rehearsal"
+        default: "v0.2.0-rehearsal"
         type: string
       rehearsal:
         description: "Skip GitHub Release publication and only run the release rehearsal"
@@ -32,7 +32,7 @@ env:
   OIDC_IDENTITY_REGEX: ${{ github.event_name == 'workflow_dispatch' && format('https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@{0}', github.ref) || 'https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' }}
   RUSTFLAGS: -D warnings
   RUST_VERSION: "1.88"
-  CARGO_DENY_VERSION: "0.16.4"
+  CARGO_DENY_VERSION: "0.19.8"
   COSIGN_VERSION: "2.4.3"
 
 jobs:
@@ -86,7 +86,9 @@ jobs:
 
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny --version "${CARGO_DENY_VERSION}" --locked --quiet
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          cargo +stable install cargo-deny --version "${CARGO_DENY_VERSION}" --locked --quiet
 
       - name: Audit dependencies
         run: cargo deny --config deny.toml check advisories licenses bans sources
@@ -209,9 +211,16 @@ jobs:
           binary="target/${{ matrix.target }}/release/olyx${{ matrix.ext }}"
           "${binary}" --version | grep -E '^olyx [0-9]+\.[0-9]+\.[0-9]+$'
           "${binary}" help >/dev/null
+          "${binary}" help route >/dev/null
+          "${binary}" help debug >/dev/null
+          "${binary}" help replay >/dev/null
+          "${binary}" check examples/olyx.json >/dev/null
+          "${binary}" route --config examples/olyx.json --input examples/request.json --dry-run >/dev/null
           "${binary}" help trace >/dev/null
           "${binary}" help complete >/dev/null
           "${binary}" inspect >/dev/null
+          python_cmd=$(command -v python3 || command -v python)
+          "${python_cmd}" scripts/smoke-local.py "${binary}"
 
       - name: Prepare signed artifact
         shell: bash
@@ -222,6 +231,8 @@ jobs:
           archive_ext="${{ matrix.archive_ext }}"
           mkdir -p "dist/${asset}"
           cp "target/${{ matrix.target }}/release/olyx${{ matrix.ext }}" "dist/${asset}/olyx${{ matrix.ext }}"
+          cp LICENSE NOTICE README.md "dist/${asset}/"
+          cp -R examples "dist/${asset}/examples"
           if [[ "${archive_ext}" != "zip" ]]; then
             chmod 0755 "dist/${asset}/olyx${{ matrix.ext }}"
           fi
@@ -261,17 +272,19 @@ jobs:
           test ! -e "dist/${asset}/Cargo.toml"
           if [[ "${archive_ext}" == "zip" ]]; then
             (cd dist && 7z a "${asset}.zip" "${asset}")
-            sha256sum "dist/${asset}.zip" > "dist/${asset}.zip.sha256"
+            (cd dist && sha256sum "${asset}.zip" > "${asset}.zip.sha256")
             cosign sign-blob --yes \
               --bundle "dist/${asset}.zip.bundle" \
               "dist/${asset}.zip"
           else
             tar -C dist -czf "dist/${asset}.tar.gz" "${asset}"
-            shasum -a 256 "dist/${asset}.tar.gz" > "dist/${asset}.tar.gz.sha256"
+            (cd dist && shasum -a 256 "${asset}.tar.gz" > "${asset}.tar.gz.sha256")
             cosign sign-blob --yes \
               --bundle "dist/${asset}.tar.gz.bundle" \
               "dist/${asset}.tar.gz"
           fi
+          python_cmd=$(command -v python3 || command -v python)
+          "${python_cmd}" scripts/validate-archive.py "dist/${asset}.${archive_ext}"
           rm -rf "dist/${asset}"
 
       - name: Upload artifact
@@ -321,7 +334,7 @@ jobs:
             test -s "dist/${file}"
             test -s "dist/${file}.sha256"
             test -s "dist/${file}.bundle"
-            sha256sum -c "dist/${file}.sha256"
+            (cd dist && sha256sum -c "${file}.sha256")
             cosign verify-blob \
               --bundle "dist/${file}.bundle" \
               --certificate-identity-regexp "${OIDC_IDENTITY_REGEX}" \
@@ -338,18 +351,26 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG}"
+          export version
           cat > dist/RELEASE_NOTES.md <<EOF
+          ## Local routing, replay, and debugging
+
+          This release adds standalone model routing with fallbacks, SQLite trace storage,
+          live replay/comparison, and local debugging. Local commands need only your
+          provider keys; no Olyx account or enterprise license is required.
+          Example configuration and requests are included in every archive.
+
           ## Install
 
           Download the archive for your platform, verify its checksum, then install the \`olyx\` binary.
 
           | Platform | Archive |
           | :--- | :--- |
-          | Linux x86_64 (static) | \`olyx-\${version}-x86_64-unknown-linux-musl.tar.gz\` |
-          | Linux arm64 (static) | \`olyx-\${version}-aarch64-unknown-linux-musl.tar.gz\` |
-          | macOS Apple Silicon | \`olyx-\${version}-aarch64-apple-darwin.tar.gz\` |
-          | macOS Intel | \`olyx-\${version}-x86_64-apple-darwin.tar.gz\` |
-          | Windows x86_64 | \`olyx-\${version}-x86_64-pc-windows-msvc.zip\` |
+          | Linux x86_64 (static) | \`olyx-${version}-x86_64-unknown-linux-musl.tar.gz\` |
+          | Linux arm64 (static) | \`olyx-${version}-aarch64-unknown-linux-musl.tar.gz\` |
+          | macOS Apple Silicon | \`olyx-${version}-aarch64-apple-darwin.tar.gz\` |
+          | macOS Intel | \`olyx-${version}-x86_64-apple-darwin.tar.gz\` |
+          | Windows x86_64 | \`olyx-${version}-x86_64-pc-windows-msvc.zip\` |
 
           Each archive ships with a per-archive \`.sha256\` checksum file, a Sigstore \`.bundle\` file,
           and a release-wide \`SHA256SUMS.txt\` manifest. Linux binaries are fully static — no runtime
@@ -358,7 +379,7 @@ jobs:
           **Linux / macOS:**
 
           \`\`\`sh
-          asset="olyx-\${version}-x86_64-unknown-linux-musl.tar.gz"
+          asset="olyx-${version}-x86_64-unknown-linux-musl.tar.gz"
           sha256sum -c "\${asset}.sha256"
           cosign verify-blob \\
             --bundle "\${asset}.bundle" \\
@@ -366,17 +387,21 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
             "\${asset}"
           tar -xzf "\${asset}"
-          install -m 0755 "olyx-\${version}-x86_64-unknown-linux-musl/olyx" /usr/local/bin/olyx
+          install -m 0755 "olyx-${version}-x86_64-unknown-linux-musl/olyx" /usr/local/bin/olyx
+          cd "olyx-${version}-x86_64-unknown-linux-musl"
+          export OPENAI_API_KEY=your-provider-key
+          olyx check examples/olyx.json
+          olyx route --config examples/olyx.json --input examples/request.json
           \`\`\`
 
           **Windows (PowerShell):**
 
           \`\`\`powershell
-          \$asset = "olyx-\${version}-x86_64-pc-windows-msvc.zip"
+          \$asset = "olyx-${version}-x86_64-pc-windows-msvc.zip"
           (Get-FileHash \$asset -Algorithm SHA256).Hash.ToLower() + "  " + \$asset |
             Compare-Object (Get-Content "\${asset}.sha256")
           Expand-Archive \$asset -DestinationPath .
-          Move-Item "olyx-\${version}-x86_64-pc-windows-msvc\\olyx.exe" "\$env:LOCALAPPDATA\\Microsoft\\WindowsApps\\olyx.exe"
+          Move-Item "olyx-${version}-x86_64-pc-windows-msvc\\olyx.exe" "\$env:LOCALAPPDATA\\Microsoft\\WindowsApps\\olyx.exe"
           \`\`\`
           EOF
 

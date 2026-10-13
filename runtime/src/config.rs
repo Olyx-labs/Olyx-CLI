@@ -14,6 +14,8 @@ pub struct Config {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Provider {
+    #[serde(default)]
+    pub protocol: Protocol,
     pub base_url: String,
     pub model: String,
     pub api_key_env: String,
@@ -110,4 +112,13 @@ impl Config {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Protocol {
+    #[default]
+    Openai,
+    Anthropic,
+    Gemini,
 }

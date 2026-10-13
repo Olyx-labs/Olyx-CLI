@@ -1,4 +1,5 @@
 pub mod config;
+mod provider;
 mod store;
 
 use config::Config;
@@ -79,7 +80,8 @@ impl State {
             config,
             store: AsyncMutex::new(store),
             client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(60))
+                .connect_timeout(Duration::from_secs(15))
+                .read_timeout(Duration::from_secs(60))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
             provider_keys,
@@ -87,11 +89,11 @@ impl State {
     }
 
     fn prepare(&self, mut body: Value) -> Result<Value, Failure> {
-        if !body.is_object() || !body["messages"].as_array().is_some_and(|a| !a.is_empty()) {
+        if !body.is_object()
+            || (body.get("native_request").is_none()
+                && body["messages"].as_array().is_none_or(|a| a.is_empty()))
+        {
             return Err(failure(StatusCode::BAD_REQUEST, "messages_required"));
-        }
-        if body["stream"].as_bool() == Some(true) {
-            return Err(failure(StatusCode::BAD_REQUEST, "streaming_not_supported"));
         }
         let text = body.to_string();
         if text.len() > self.config.policy.max_body_bytes {
@@ -125,6 +127,15 @@ impl State {
     }
 
     async fn execute(&self, trace_id: &str, body: Value) -> Result<Value, Failure> {
+        self.execute_events(trace_id, body, &mut |_| Ok(())).await
+    }
+
+    async fn execute_events(
+        &self,
+        trace_id: &str,
+        body: Value,
+        emit: &mut dyn FnMut(Value) -> Result<(), Failure>,
+    ) -> Result<Value, Failure> {
         let requested = body["model"]
             .as_str()
             .ok_or_else(|| failure(StatusCode::BAD_REQUEST, "model_required"))?
@@ -163,6 +174,7 @@ impl State {
                         "provider_credentials_unavailable",
                     )
                 })?;
+            let request = provider::request(&self.client, candidate, &payload, provider_key)?;
             let month = chrono::Utc::now().format("%Y-%m").to_string();
             let output_limit = payload
                 .get("max_completion_tokens")
@@ -187,16 +199,7 @@ impl State {
                 ));
             }
             let started = Instant::now();
-            let response = self
-                .client
-                .post(format!(
-                    "{}/chat/completions",
-                    candidate.base_url.trim_end_matches('/')
-                ))
-                .bearer_auth(provider_key)
-                .json(&payload)
-                .send()
-                .await;
+            let response = request.send().await;
             let response = match response {
                 Ok(response) => response,
                 Err(_) => {
@@ -225,29 +228,21 @@ impl State {
                     "provider_rejected_request",
                 ));
             }
-            let mut response = response;
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| failure(StatusCode::BAD_GATEWAY, "invalid_provider_response"))?
-            {
-                if bytes.len() + chunk.len() > 8_388_608 {
-                    return Err(failure(
-                        StatusCode::BAD_GATEWAY,
-                        "provider_response_too_large",
-                    ));
+            let streaming = prepared["stream"].as_bool() == Some(true);
+            let mut partial = Value::Null;
+            let output = match provider::read(response, candidate.protocol, streaming, &mut |output| {
+                partial = output.clone();
+                emit(json!({"type":"snapshot","trace_id":trace_id,"model":candidate.model,"output":output}))
+            }).await {
+                Ok(output) => output,
+                Err(error) => {
+                    self.store.lock().await.record(trace_id, &candidate.model, &prepared,
+                        &json!({"reason":error.code,"partial_output":partial}), (reserved, started.elapsed().as_millis(), false)).map_err(storage_error)?;
+                    // Never fall back after a successful HTTP response: streaming may
+                    // already have delivered content or incurred upstream usage.
+                    return Err(error);
                 }
-                bytes.extend_from_slice(&chunk);
-            }
-            let output: Value = serde_json::from_slice(&bytes)
-                .map_err(|_| failure(StatusCode::BAD_GATEWAY, "invalid_provider_response"))?;
-            if !output["choices"].as_array().is_some_and(|a| !a.is_empty()) {
-                return Err(failure(
-                    StatusCode::BAD_GATEWAY,
-                    "invalid_provider_response",
-                ));
-            }
+            };
             let cost = match (
                 output["usage"]["prompt_tokens"].as_u64(),
                 output["usage"]["completion_tokens"].as_u64(),
@@ -293,13 +288,21 @@ fn storage_error(_: anyhow::Error) -> Failure {
 
 impl State {
     pub async fn route(&self, body: Value) -> Result<Value, Failure> {
+        self.route_with_events(body, &mut |_| Ok(())).await
+    }
+
+    pub async fn route_with_events(
+        &self,
+        body: Value,
+        emit: &mut dyn FnMut(Value) -> Result<(), Failure>,
+    ) -> Result<Value, Failure> {
         let id = self
             .store
             .lock()
             .await
             .create(json!({"source":"olyx-cli"}))
             .map_err(storage_error)?;
-        let output = self.execute(&id, body).await;
+        let output = self.execute_events(&id, body, emit).await;
         match &output {
             Ok(_) => {
                 self.store

@@ -33,7 +33,7 @@ Usage:
   olyx debug [trace_id] --config olyx.json
   olyx check olyx.json
   olyx help
-  olyx help <inspect|login|config|trace|complete|replay>
+  olyx help <route|debug|inspect|login|config|trace|complete|replay>
   olyx --version
   olyx login [--base-url URL]
   olyx inspect [--base-url URL] [--api-key KEY] [--dry-run]
@@ -52,6 +52,7 @@ Global Options:
   -V, --version      Print the CLI version.
 
 Environment:
+  OLYX_CONFIG      Local configuration file for routing, replay, and debugging
   OLYX_BASE_URL    Defaults to https://app.olyxai.io
   OLYX_API_KEY     Project-scoped Olyx API key
 "#;

@@ -4,5 +4,5 @@ contact_links:
     url: mailto:security@olyxai.io?subject=Olyx%20CLI%20security%20report
     about: Report vulnerabilities privately. Do not file public security issues.
   - name: CLI docs
-    url: https://app.olyxai.io/docs/v1/cli
+    url: https://docs.olyxai.io/getting-started/quickstart/
     about: Review the public CLI documentation before opening a support request.

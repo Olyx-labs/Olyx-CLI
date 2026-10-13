@@ -4,6 +4,29 @@ Apache-2.0 command-line routing, replay, and debugging for AI model requests.
 The public repository builds on its own: no private repositories, enterprise
 licenses, Olyx account, or Olyx Cloud connection are required for local commands.
 
+## Install
+
+Download the archive for your platform from [GitHub Releases](https://github.com/Olyx-labs/Olyx-CLI/releases).
+Each archive contains the binary, examples, LICENSE, NOTICE, and README files.
+Verify the adjacent checksum and Sigstore bundle before running it:
+
+```sh
+asset=olyx-v0.2.0-aarch64-apple-darwin.tar.gz
+shasum -a 256 -c "$asset.sha256"
+cosign verify-blob --bundle "$asset.bundle" \
+  --certificate-identity-regexp 'https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com "$asset"
+tar -xzf "$asset"
+cd olyx-v0.2.0-aarch64-apple-darwin
+./olyx check examples/olyx.json
+```
+
+Use the archive matching your OS and CPU. The example names the prepared 0.2.0
+release; use an available release from GitHub Releases until it is published.
+Windows users can verify with `Get-FileHash`, extract the `.zip`, and put
+`olyx.exe` on PATH. Source builds require Rust 1.88 or newer and a C compiler
+for bundled SQLite.
+
 ## Local workflow
 
 ```sh
@@ -37,25 +60,45 @@ against their original routes. `--model ALIAS` selects one alternative;
 the original. Results come from live model calls; provider failure returns an
 error rather than a simulated answer. Local replay is synchronous.
 
-This first local runtime supports non-streaming OpenAI-compatible
-`/chat/completions` providers, including compatible private model endpoints.
-It returns tool calls but does not execute tools or reconstruct a whole agent
-workflow. Replay compares recorded model requests, not external tool side effects.
-Native Anthropic/Gemini protocols and streaming are not implemented here.
+The runtime supports OpenAI-compatible chat completions, native Anthropic Messages,
+and native Gemini GenerateContent. Set `protocol` to `openai` (default),
+`anthropic`, or `gemini` on each provider. Use base URLs ending in `/v1` for
+OpenAI and Anthropic, and `/v1beta` for Gemini.
+
+Add `"stream": true` to a request to receive flushed NDJSON snapshots during
+routing, followed by a `completed` event containing the trace ID and full response.
+Each snapshot contains the cumulative response rather than only the latest delta.
+Debug stores the completed response; replay and comparison consume recorded
+streaming requests and return their accumulated results. An interrupted stream
+fails the trace and stops the route; it does not start another provider after
+partial output. Failed steps are excluded from replay.
+
+Common text messages, system instructions, temperature, top-p, stop sequences,
+and output token controls are translated for native providers. For tools, images,
+reasoning options, or other native features, use an envelope with `model`, optional
+`stream` and `max_tokens`, plus `native_request` containing the provider's request
+body. The configured model, streaming mode, and output token limit take precedence.
+Native responses retain `native_response`, including tool calls and thought
+signatures. Return those native blocks in subsequent native requests when required
+by the provider. Unsupported common fields return an error rather than being
+silently dropped. Compare native envelopes only across routes using the same
+protocol; use common text messages for comparisons across providers. Tool calls are returned; the CLI does not execute tools.
+
+```json
+{
+  "model": "claude",
+  "stream": true,
+  "native_request": {
+    "messages": [{"role": "user", "content": "Hello"}]
+  }
+}
+```
 
 ## Configuration and storage
 
 See [examples/olyx.json](examples/olyx.json). URLs require HTTPS except for
 loopback endpoints. List additional providers under an alias to configure
 fallbacks. `check FILE` validates configuration without requiring credentials.
-
-Set `input_per_million` and `output_per_million` to your provider's rates before
-using cost tracking or `monthly_budget_usd`. The example deliberately uses zero
-prices and disables the spend cap; it does not claim current provider pricing.
-Costs are estimates using configured prices and provider-reported token usage.
-The monthly budget uses conservative reservations shared across CLI processes.
-Transport failures retain reservations because upstream charges may be ambiguous.
-It is not a substitute for provider billing limits.
 
 The SQLite database path is relative to the configuration file. Trace retention
 is configurable and enforced when a local runtime command opens the database.
@@ -64,7 +107,7 @@ cloud sync. Keep the database private. CLI output masks recognizable credentials
 Routing and replay preserve prompt and response content. Request-size and
 output-token limits validate requests; they do not scan or redact content.
 
-Olyx Cloud's 10,000 recorded traces and 50 replay-call allowances do not apply to
+Hosted allowances do not apply to
 local execution. You pay your provider and supply your own storage and compute.
 
 ## Existing Cloud commands
@@ -106,4 +149,5 @@ cargo deny check --config deny.toml advisories licenses bans sources
 
 Supported release targets: Linux x86_64/arm64, macOS Intel/Apple Silicon, and
 Windows x86_64. SQLite is bundled into the binary; no database server is required.
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
+[RELEASING.md](RELEASING.md). The prepared 0.2.0 changes are in [CHANGELOG.md](CHANGELOG.md).
