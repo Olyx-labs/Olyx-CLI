@@ -91,7 +91,7 @@ jobs:
           cargo +stable install cargo-deny --version "${CARGO_DENY_VERSION}" --locked --quiet
 
       - name: Audit dependencies
-        run: cargo deny --config deny.toml check advisories licenses bans sources
+        run: cargo deny check --config deny.toml advisories licenses bans sources
 
   build:
     name: Build ${{ matrix.target }}
