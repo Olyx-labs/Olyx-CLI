@@ -1,0 +1,17 @@
+{
+  "name": "olyx-cli",
+  "version": "0.2.0",
+  "description": "Route, replay, and debug model requests from your terminal",
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/Olyx-labs/Olyx-CLI.git" },
+  "homepage": "https://olyxai.io",
+  "engines": { "node": ">=22" },
+  "bin": { "oy": "bin/oy.cjs" },
+  "files": ["bin/oy.cjs", "README.md", "LICENSE", "NOTICE"],
+  "optionalDependencies": {
+    "olyx-cli-darwin-arm64": "0.2.0",
+    "olyx-cli-linux-arm64": "0.2.0",
+    "olyx-cli-linux-x64": "0.2.0"
+  },
+  "publishConfig": { "access": "public" }
+}

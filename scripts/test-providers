@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Run all account-free provider checks; live calls require explicit opt-in."""
+import argparse
+from datetime import datetime, timezone
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+SUITES = [
+    ('local', 'Compatible HTTP routing, streaming, replay and comparison', ['openai']),
+    ('plugins', 'Versioned subprocess adapter contract', ['plugin']),
+    ('server', 'HTTP, authentication, SSE and shutdown', []),
+    ('embeddings', 'Embeddings, validation, fallback and persistence', []),
+    ('diagnostics', 'Doctor, error codes and failure-first debug', []),
+    ('edge-cases', 'Adversarial responses, streams and cancellation', []),
+    ('storage', 'SQLite persistence, concurrent writers, backup and retention', []),
+    ('standalone', 'Local command help, setup, inspect and request preview', []),
+]
+# Provider secrets and local application settings never enter mock subprocesses.
+LOCAL_ENV = {'PATH', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'SystemRoot', 'COMSPEC',
+             'PATHEXT', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'CARGO_HOME',
+             'RUSTUP_HOME', 'LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH'}
+
+
+def run_check(name, command, environment, timeout=240):
+    start = time.monotonic()
+    try:
+        result = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True,
+                                text=True, encoding='utf-8', errors='replace', timeout=timeout)
+        row = {'name': name, 'status': 'PASS' if result.returncode == 0 else 'FAIL'}
+        if result.returncode:
+            row.update(reason='nonzero_exit', exit_code=result.returncode)
+    except subprocess.TimeoutExpired:
+        row = {'name': name, 'status': 'FAIL', 'reason': 'timeout'}
+    except OSError:
+        row = {'name': name, 'status': 'FAIL', 'reason': 'command_unavailable'}
+    # Raw output may contain user paths or environment data: omit it from evidence.
+    row['elapsed_ms'] = round((time.monotonic() - start) * 1000)
+    print(f"{row['status']:4} {name}", flush=True)
+    return row
+
+
+def local_checks(binary=None):
+    environment = {key: value for key, value in os.environ.items() if key in LOCAL_ENV}
+    checks = []
+    if binary is None:
+        binary = ROOT / 'target' / 'debug' / 'oy'
+        checks.append(run_check('build', ['cargo', 'build', '--locked', '--bin', 'oy'], environment, 900))
+        if checks[-1]['status'] != 'PASS':
+            return binary, checks
+        checks.append(run_check('rust-unit-tests', ['cargo', 'test', '--locked', '--workspace'], environment, 900))
+    binary = Path(binary).resolve()
+    if not binary.is_file():
+        checks.append({'name': 'binary', 'status': 'FAIL', 'reason': 'binary_unavailable'})
+        return binary, checks
+    for name, _, _ in SUITES:
+        checks.append(run_check(name, [sys.executable, str(ROOT / 'scripts' / f'smoke-{name}.py'), str(binary)], environment))
+    environment['OLYX_TEST_BINARY'] = str(binary)
+    checks.append(run_check('verification-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts', '-p', 'test_*.py'], environment))
+    return binary, checks
+
+
+def coverage(checks):
+    statuses = {row['name']: row['status'] for row in checks}
+    return [{'protocol': protocol, 'contract': 'PASS' if statuses.get(name) == 'PASS' else 'NOT_VERIFIED'}
+            for name, _, protocols in SUITES for protocol in protocols]
+
+
+def live_checks(binary, config, aliases):
+    spec = importlib.util.spec_from_file_location('olyx_certification', ROOT / 'scripts' / 'certify-providers.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.certify(binary, config, aliases)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--binary', type=Path, help='Use an existing binary; skip Cargo build and Rust unit tests')
+    parser.add_argument('--report', type=Path, help='Write sanitized JSON to a new file')
+    parser.add_argument('--live-config', type=Path, help='Opt in live checks using this private configuration')
+    parser.add_argument('--alias', action='append', help='Explicit live route; repeat to select more')
+    parser.add_argument('--require-live', action='store_true', help='Fail when any selected live route is skipped')
+    args = parser.parse_args(argv)
+    if bool(args.live_config) != bool(args.alias) or (args.require_live and not args.live_config):
+        parser.error('--live-config and --alias must be supplied together; --require-live needs both')
+    if args.report and (args.report.exists() or args.report.is_symlink() or not args.report.parent.is_dir()):
+        parser.error('--report must be a new file in an existing directory')
+    config = None
+    if args.live_config:
+        try:
+            config = json.loads(args.live_config.read_text(encoding='utf-8'))
+            if not isinstance(config, dict):
+                raise ValueError()
+        except (OSError, ValueError):
+            parser.error('cannot read live configuration JSON')
+    report = {'schema_version': 1, 'created_at': datetime.now(timezone.utc).isoformat(),
+              'mode': 'local-and-live' if config is not None else 'local', 'checks': [], 'live': None}
+    binary, report['checks'] = local_checks(args.binary)
+    report['coverage'] = coverage(report['checks'])
+    local_failed = any(row['status'] != 'PASS' for row in report['checks'])
+    live_failed = False
+    if config is not None and not local_failed:
+        print('Running explicitly selected live checks (provider usage charges apply).', flush=True)
+        try:
+            report['live'] = live_checks(binary, config, args.alias)
+            counts = report['live']['summary']
+            live_failed = counts['FAIL'] > 0 or (args.require_live and counts['SKIP'] > 0)
+            print(f"Live routes: {counts['PASS']} PASS, {counts['FAIL']} FAIL, {counts['SKIP']} SKIP")
+        except (OSError, ValueError, TypeError, AttributeError, KeyError):
+            report['live'] = {'status': 'FAIL', 'reason': 'invalid_live_configuration'}
+            live_failed = True
+    elif config is not None:
+        report['live'] = {'status': 'SKIP', 'reason': 'local_checks_failed'}
+    print('\nProvider coverage (local contracts):')
+    for row in report['coverage']:
+        print(f"  {row['protocol']:12} {row['contract']}")
+    failed = local_failed or live_failed
+    report['status'] = 'FAIL' if failed else 'PASS'
+    if args.report:
+        try:
+            with args.report.open('x', encoding='utf-8') as output:
+                output.write(json.dumps(report, indent=2) + '\n')
+        except OSError:
+            print('FAIL cannot create report file', file=sys.stderr)
+            return 2
+    print(f"\n{report['status']}: {sum(r['status'] == 'PASS' for r in report['checks'])}/{len(report['checks'])} local checks passed.")
+    if config is None:
+        print('No live provider calls. No provider accounts or credentials required.')
+    elif local_failed:
+        print('Live checks skipped because local checks failed.')
+    return 1 if failed else 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

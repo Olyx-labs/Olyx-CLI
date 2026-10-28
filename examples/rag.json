@@ -1,0 +1,15 @@
+{
+  "database": "../data/rag-traces.db",
+  "models": {
+    "embed": [{
+      "base_url": "https://api.openai.com/v1",
+      "model": "text-embedding-3-small",
+      "api_key_env": "OPENAI_API_KEY"
+    }],
+    "answer": [{
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-4o-mini",
+      "api_key_env": "OPENAI_API_KEY"
+    }]
+  }
+}

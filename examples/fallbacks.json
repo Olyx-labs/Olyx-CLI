@@ -1,0 +1,33 @@
+{
+  "database": "../data/traces.db",
+  "models": {
+    "fast": [
+      {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+        "api_key_env": "OPENAI_API_KEY"
+      },
+      {
+        "protocol": "openai",
+        "base_url": "https://router.huggingface.co/v1",
+        "model": "YOUR_HF_MODEL",
+        "api_key_env": "HF_TOKEN"
+      }
+    ],
+    "quality": [
+      {
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o",
+        "api_key_env": "OPENAI_API_KEY"
+      }
+    ],
+    "huggingface": [
+      {
+        "protocol": "openai",
+        "base_url": "https://router.huggingface.co/v1",
+        "model": "YOUR_HF_MODEL",
+        "api_key_env": "HF_TOKEN"
+      }
+    ]
+  }
+}

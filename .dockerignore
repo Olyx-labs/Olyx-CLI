@@ -1,0 +1,13 @@
+*
+!Cargo.toml
+!Cargo.lock
+!src/
+!src/**
+!runtime/
+!runtime/Cargo.toml
+!runtime/src/
+!runtime/src/**
+!containers/
+!containers/olyx.json
+!LICENSE
+!NOTICE

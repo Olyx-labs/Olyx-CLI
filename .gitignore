@@ -1,0 +1,54 @@
+target/
+.DS_Store
+.env
+.env.*
+*.log
+
+# Local runtime artifacts
+license.olyx.json
+policy-pack.olyx.json
+
+# Downloaded release artifacts
+olyx-*.tar.gz
+olyx-*.tar.gz.sha256
+olyx-*.tar.gz.sig
+olyx-*.tar.gz.pem
+olyx-*.bundle
+
+# Key material
+*.pub
+
+# CI build directories
+dist/
+release-workspace/
+
+# Local recorded model payloads
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Optional live certification evidence (submit only reviewed, sanitized reports)
+provider-certification*.json
+__pycache__/
+
+# Internal release notes and audit reports
+/docs/release-readiness.md
+/docs/security-review.md
+/docs/zap-prerelease-review.md
+/docs/provider-verification/
+*.sessions/
+
+# Additional SQLite files and local test reports
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+provider-tests*.json
+provider-tests-live*.json
+
+# Local npm dependencies and packed packages
+node_modules/
+*.tgz

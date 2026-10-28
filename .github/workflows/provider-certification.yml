@@ -1,0 +1,51 @@
+name: Optional live provider certification
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 8 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    if: vars.OLYX_CERTIFICATION_CONFIG != '' && vars.OLYX_CERTIFICATION_ALIASES != ''
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0
+        with:
+          persist-credentials: false
+      - name: Build CLI
+        run: |
+          rustup toolchain install 1.88 --profile minimal --no-self-update
+          cargo +1.88 build --locked --release --bin oy
+      - name: Certify selected routes
+        env:
+          CERT_CONFIG: ${{ vars.OLYX_CERTIFICATION_CONFIG }}
+          CERT_ALIASES: ${{ vars.OLYX_CERTIFICATION_ALIASES }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, sys
+          config = pathlib.Path(os.environ['RUNNER_TEMP']) / 'certification-config.json'
+          config.write_text(os.environ['CERT_CONFIG'])
+          config.chmod(0o600)
+          aliases = json.loads(os.environ['CERT_ALIASES'])
+          if not isinstance(aliases, list) or not aliases or not all(isinstance(a, str) for a in aliases):
+              raise SystemExit('Certification aliases must be a nonempty JSON string array')
+          command = ['python3', 'scripts/certify-providers.py', '--config', str(config), '--report', 'provider-certification.json', '--require-live']
+          for alias in aliases:
+              command += ['--alias', alias]
+          sys.exit(subprocess.call(command))
+          PY
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: provider-certification
+          path: provider-certification.json
+          if-no-files-found: ignore
+          retention-days: 30

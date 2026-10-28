@@ -1,0 +1,9 @@
+{
+  "model": "fast",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write a short status update."
+    }
+  ]
+}

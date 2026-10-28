@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Check a plugin's declared contract through the CLI. Use a fixture mode for account-free checks."""
+import argparse
+from contextlib import contextmanager
+import importlib.util
+import json
+import os
+from pathlib import Path
+import queue
+import re
+import secrets
+import subprocess
+import sys
+import tempfile
+import threading
+from urllib.request import Request, urlopen
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('certification', ROOT / 'scripts/certify-providers.py')
+certification = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(certification)
+
+
+@contextmanager
+def gateway(binary, config):
+    token = secrets.token_hex(24)
+    process = subprocess.Popen([str(binary), 'serve', '--local', '--port', '0', '--config', str(config)],
+                               env={**os.environ, 'OLYX_SERVER_API_KEY': token}, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.PIPE, text=True)
+    lines = queue.Queue()
+    def collect():
+        for line in process.stderr:
+            lines.put(line)
+    reader = threading.Thread(target=collect, daemon=True)
+    reader.start()
+    try:
+        try:
+            line = lines.get(timeout=15)
+        except queue.Empty:
+            raise ValueError('gateway_start_failed') from None
+        match = re.search(r'Olyx listening on (http://[^;]+)', line)
+        if not match:
+            raise ValueError('gateway_start_failed')
+        def request(path, body):
+            req = Request(match.group(1) + path, data=json.dumps(body).encode(), headers={
+                'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+            with urlopen(req, timeout=90) as response:
+                return json.load(response), response.headers.get('X-Olyx-Trace-Id')
+        yield request
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill(); process.wait()
+        reader.join(timeout=2)
+        process.stderr.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/oy')
+    parser.add_argument('--config', type=Path, required=True)
+    parser.add_argument('--alias', required=True)
+    parser.add_argument('--report', type=Path)
+    args = parser.parse_args()
+    if args.report and (args.report.exists() or args.report.is_symlink() or not args.report.parent.is_dir()):
+        parser.error('report must be a new file in an existing directory')
+    try:
+        configured = json.loads(args.config.read_text())['models'][args.alias]
+        if len(configured) != 1 or configured[0]['protocol'] != 'plugin':
+            raise ValueError()
+        provider = configured[0]
+        capabilities = provider['plugin']['capabilities']
+    except (OSError, ValueError, KeyError, TypeError):
+        parser.error('select exactly one configured plugin candidate')
+    print('Executing the selected trusted plugin. Use its fixture mode to avoid provider calls.', flush=True)
+    report = {'schema_version': 1, 'protocol_version': 1, 'verification': 'plugin-contract-only', 'checks': []}
+    with tempfile.TemporaryDirectory(prefix='olyx-test-plugin-') as directory:
+        config = Path(directory) / 'olyx.json'
+        config.write_text(json.dumps({'database': str(Path(directory) / 'traces.db'), 'models': {'test': [provider]}}))
+        config.chmod(0o600)
+        binary = args.binary.resolve()
+        def invoke(*cmd, body=None):
+            return certification.invoke(binary, config, *cmd, body=body)
+        def check(name, function):
+            try:
+                function()
+                status = 'PASS'
+            except Exception:
+                status = 'FAIL'
+            report['checks'].append({'name': name, 'status': status})
+            print(status + ' ' + name, flush=True)
+        def require(condition):
+            if not condition:
+                raise ValueError()
+        def configuration():
+            result = subprocess.run([str(binary), 'check', str(config)], capture_output=True, timeout=90)
+            require(result.returncode == 0)
+        check('configuration', configuration)
+        body = {'model': 'test', 'messages': [{'role': 'user', 'content': 'Reply briefly OK.'}], 'max_tokens': 128}
+        if 'chat' in capabilities:
+            def chat():
+                result = invoke('route', '--input', '-', body=body)
+                certification.assert_output(result['output'])
+                original = invoke('debug', result['trace_id'])
+                replay = invoke('replay', result['trace_id'])
+                require(original['status'] == 'completed' and replay['status'] == 'completed')
+                require(original == invoke('debug', result['trace_id']))
+            check('chat-trace-replay', chat)
+            if 'streaming' in capabilities:
+                def stream():
+                    events = invoke('route', '--input', '-', body={**body, 'stream': True})
+                    require(events[-1]['type'] == 'completed' and any(e['type'] == 'snapshot' for e in events))
+                    certification.assert_output(events[-1]['output'])
+                check('streaming', stream)
+            if 'tools' in capabilities:
+                def tools():
+                    request = {**body, 'tools': [{'type': 'function', 'function': {'name': 'contract_check', 'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False}}}], 'tool_choice': {'type': 'function', 'function': {'name': 'contract_check'}}}
+                    result = invoke('route', '--input', '-', body=request)
+                    calls = result['output']['choices'][0]['message']['tool_calls']
+                    require(len(calls) == 1 and calls[0]['function']['name'] == 'contract_check')
+                    json.loads(calls[0]['function']['arguments'])
+                check('tools', tools)
+        if 'embeddings' in capabilities:
+            def embeddings():
+                with gateway(binary, config) as http:
+                    output, trace = http('/v1/embeddings', {'model': 'test', 'input': ['document', 'query']})
+                    require(len(output['data']) == 2 and len(output['data'][0]['embedding']) > 0)
+                    require(invoke('debug', trace)['status'] == 'completed')
+                    require(invoke('replay', trace)['status'] == 'completed')
+            check('embeddings-http-trace-replay', embeddings)
+    report['status'] = 'PASS' if all(c['status'] == 'PASS' for c in report['checks']) else 'FAIL'
+    if args.report:
+        try:
+            with args.report.open('x') as output:
+                json.dump(report, output, indent=2)
+        except OSError:
+            return 2
+    return 0 if report['status'] == 'PASS' else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

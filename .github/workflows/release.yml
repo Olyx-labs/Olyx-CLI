@@ -1,0 +1,450 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag name to use for the rehearsal artifact set"
+        required: true
+        default: "v0.2.0-rehearsal"
+        type: string
+      rehearsal:
+        description: "Skip GitHub Release publication and only run the release rehearsal"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_DEBUG: 0
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  REHEARSAL: ${{ github.event_name == 'workflow_dispatch' && inputs.rehearsal || false }}
+  OIDC_IDENTITY: ${{ format('https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@{0}', github.ref) }}
+  RUSTFLAGS: -D warnings
+  RUST_VERSION: "1.88"
+  CARGO_DENY_VERSION: "0.19.8"
+  COSIGN_VERSION: "3.1.3"
+
+jobs:
+  quality:
+    name: Quality Gate
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Validate release tag vs Cargo.toml version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [[ -z "${version}" ]]; then
+            echo "could not resolve CLI version from Cargo.toml" >&2
+            exit 1
+          fi
+          if [[ "${REHEARSAL}" == "true" ]]; then
+            if [[ "${RELEASE_TAG}" != "v${version}" && "${RELEASE_TAG}" != "v${version}-rehearsal" ]]; then
+              echo "rehearsal tag ${RELEASE_TAG} must match v${version} or v${version}-rehearsal" >&2
+              exit 1
+            fi
+          else
+            if [[ "${RELEASE_TAG}" != "v${version}" ]]; then
+              echo "tag ${RELEASE_TAG} does not match Cargo.toml version v${version}" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy,rustfmt --no-self-update
+          rustup default "${RUST_VERSION}"
+
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Verify public dependency boundary
+        run: python3 scripts/verify-public-boundary.py
+
+      - name: Account-free runtime and packaging checks
+        run: python3 scripts/test-providers
+
+      - name: Install cargo-deny
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          cargo +stable install cargo-deny --version "${CARGO_DENY_VERSION}" --locked --quiet
+
+      - name: Audit dependencies
+        run: cargo deny check --config deny.toml advisories licenses bans sources
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: quality
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            npm_target: linux-x64
+            ext: ""
+            archive_ext: tar.gz
+            cross: true
+            smoke_test: true
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            npm_target: linux-arm64
+            ext: ""
+            archive_ext: tar.gz
+            cross: false
+            smoke_test: true
+          - os: macos-15
+            target: aarch64-apple-darwin
+            npm_target: darwin-arm64
+            ext: ""
+            archive_ext: tar.gz
+            cross: false
+            smoke_test: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal --no-self-update
+          rustup default "${RUST_VERSION}"
+          rustup target add ${{ matrix.target }}
+
+
+
+      - name: Install native musl compiler
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install cross
+        if: matrix.cross == true
+        run: cargo install cross --version "0.2.5" --locked --quiet
+
+      - name: Install cosign
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}" in
+            Linux)
+              cosign_os="linux"; cosign_ext=""
+              case "$(uname -m)" in
+                aarch64|arm64) cosign_arch="arm64" ;;
+                *) cosign_arch="amd64" ;;
+              esac
+              ;;
+            macOS)
+              cosign_os="darwin"; cosign_ext=""
+              [[ "$(uname -m)" == "arm64" ]] && cosign_arch="arm64" || cosign_arch="amd64"
+              ;;
+          esac
+          binary="cosign-${cosign_os}-${cosign_arch}${cosign_ext}"
+          base="https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}"
+          curl -sSfL "${base}/${binary}" -o "${RUNNER_TEMP}/cosign${cosign_ext}"
+          curl -sSfL "${base}/cosign_checksums.txt" -o "${RUNNER_TEMP}/cosign_checksums.txt"
+          python_cmd=$(command -v python3 || command -v python)
+          "${python_cmd}" - "${RUNNER_TEMP}/cosign_checksums.txt" "${RUNNER_TEMP}/cosign${cosign_ext}" "${binary}" <<'PYTHON'
+          import hashlib
+          from pathlib import Path
+          import sys
+          checksums, downloaded, name = sys.argv[1:]
+          expected = next(line.split()[0] for line in Path(checksums).read_text().splitlines() if line.split()[-1].lstrip('*') == name)
+          assert hashlib.sha256(Path(downloaded).read_bytes()).hexdigest() == expected, 'cosign checksum mismatch'
+          PYTHON
+          chmod +x "${RUNNER_TEMP}/cosign${cosign_ext}"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${REHEARSAL}" == "true" ]]; then
+            if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rehearsal)?$ ]]; then
+              echo "rehearsal tags must match vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rehearsal" >&2
+              exit 1
+            fi
+          else
+            if [[ ! "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "release tags must match vMAJOR.MINOR.PATCH" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Build release binary
+        shell: bash
+        env:
+          CARGO_CMD: ${{ matrix.cross == true && 'cross' || 'cargo' }}
+          RUSTFLAGS: -D warnings
+        run: |
+          export RUSTFLAGS="${RUSTFLAGS} --remap-path-prefix=${GITHUB_WORKSPACE}=/src --remap-path-prefix=${HOME}=/build"
+          $CARGO_CMD build --locked --bin oy --release --target ${{ matrix.target }}
+
+      - name: Smoke test release binary
+        if: matrix.smoke_test == true
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.target }}/release/oy${{ matrix.ext }}"
+          "${binary}" --version | grep -E '^oy [0-9]+\.[0-9]+\.[0-9]+$'
+          "${binary}" help >/dev/null
+          "${binary}" help route >/dev/null
+          "${binary}" help debug >/dev/null
+          "${binary}" help replay >/dev/null
+          python_cmd=$(command -v python3 || command -v python)
+          "${python_cmd}" scripts/verify-public-boundary.py
+          "${binary}" check examples/olyx.json >/dev/null
+          "${binary}" check examples/fallbacks.json >/dev/null
+          "${binary}" route --config examples/olyx.json --input examples/request.json --dry-run >/dev/null
+          "${binary}" inspect >/dev/null
+          "${python_cmd}" -m unittest discover -s scripts -p 'test_package_release.py'
+          status=0
+          for suite in local plugins server embeddings diagnostics edge-cases storage standalone; do
+            "${python_cmd}" "scripts/smoke-${suite}.py" "${binary}" || status=1
+          done
+          exit "${status}"
+
+      - name: Prepare signed artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG}"
+          asset="olyx-${version}-${{ matrix.target }}"
+          archive_ext="${{ matrix.archive_ext }}"
+          python_cmd=$(command -v python3 || command -v python)
+          "${python_cmd}" scripts/package-release.py \
+            --binary "target/${{ matrix.target }}/release/oy${{ matrix.ext }}" \
+            --version "${version}" --target "${{ matrix.target }}" --output dist
+          cosign sign-blob --yes \
+            --bundle "dist/${asset}.tar.gz.bundle" \
+            "dist/${asset}.tar.gz"
+          python_cmd=$(command -v python3 || command -v python)
+          "${python_cmd}" scripts/validate-archive.py "dist/${asset}.${archive_ext}"
+
+      - name: Smoke test extracted package
+        if: matrix.smoke_test == true
+        shell: bash
+        run: |
+          python_cmd=$(command -v python3 || command -v python)
+          "${python_cmd}" scripts/smoke-package.py "dist/olyx-${RELEASE_TAG}-${{ matrix.target }}.${{ matrix.archive_ext }}"
+
+
+      - name: Verify npm distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          python_cmd=$(command -v python3 || command -v python)
+          node --test npm/launcher.test.cjs
+          "${python_cmd}" scripts/package-npm.py --archive "dist/olyx-${RELEASE_TAG}-${{ matrix.target }}.${{ matrix.archive_ext }}"
+          "${python_cmd}" scripts/package-npm.py
+          "${python_cmd}" scripts/smoke-npm.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}
+            dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}.sha256
+            dist/olyx-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}.bundle
+            dist/npm/olyx-cli-${{ matrix.npm_target }}-*.tgz
+
+  container:
+    name: Verify release container
+    needs: quality
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
+      - run: docker build -t olyx:rehearsal .
+      - run: docker run --rm olyx:rehearsal check /etc/olyx/olyx.json
+      - run: python3 scripts/smoke-container.py olyx:rehearsal
+
+  release:
+    name: Verify artifacts and publish when requested
+    needs: [build, container]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout npm launcher
+        uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+
+      - name: Download artifacts
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Install cosign
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}" in
+            Linux)
+              cosign_os="linux"; cosign_ext=""
+              case "$(uname -m)" in
+                aarch64|arm64) cosign_arch="arm64" ;;
+                *) cosign_arch="amd64" ;;
+              esac
+              ;;
+            macOS)
+              cosign_os="darwin"; cosign_ext=""
+              [[ "$(uname -m)" == "arm64" ]] && cosign_arch="arm64" || cosign_arch="amd64"
+              ;;
+          esac
+          binary="cosign-${cosign_os}-${cosign_arch}${cosign_ext}"
+          base="https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}"
+          curl -sSfL "${base}/${binary}" -o "${RUNNER_TEMP}/cosign${cosign_ext}"
+          curl -sSfL "${base}/cosign_checksums.txt" -o "${RUNNER_TEMP}/cosign_checksums.txt"
+          python_cmd=$(command -v python3 || command -v python)
+          "${python_cmd}" - "${RUNNER_TEMP}/cosign_checksums.txt" "${RUNNER_TEMP}/cosign${cosign_ext}" "${binary}" <<'PYTHON'
+          import hashlib
+          from pathlib import Path
+          import sys
+          checksums, downloaded, name = sys.argv[1:]
+          expected = next(line.split()[0] for line in Path(checksums).read_text().splitlines() if line.split()[-1].lstrip('*') == name)
+          assert hashlib.sha256(Path(downloaded).read_bytes()).hexdigest() == expected, 'cosign checksum mismatch'
+          PYTHON
+          chmod +x "${RUNNER_TEMP}/cosign${cosign_ext}"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Verify release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            "olyx-${RELEASE_TAG}-x86_64-unknown-linux-musl.tar.gz"
+            "olyx-${RELEASE_TAG}-aarch64-unknown-linux-musl.tar.gz"
+            "olyx-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz"
+          )
+          for file in "${expected[@]}"; do
+            test -s "dist/${file}"
+            test -s "dist/${file}.sha256"
+            test -s "dist/${file}.bundle"
+            (cd dist && sha256sum -c "${file}.sha256")
+            cosign verify-blob \
+              --bundle "dist/${file}.bundle" \
+              --certificate-identity "${OIDC_IDENTITY}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "dist/${file}"
+          done
+          (
+            cd dist
+            sha256sum *.tar.gz > SHA256SUMS.txt
+          )
+
+      - name: Prepare npm launcher
+        run: python3 scripts/package-npm.py
+
+      - name: Upload npm release packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: olyx-npm-${{ env.RELEASE_TAG }}
+          path: dist/npm/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Build release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG}"
+          export version
+          cat > dist/RELEASE_NOTES.md <<EOF
+          ## Local routing, replay, and debugging
+
+          This release adds standalone model routing with fallbacks, SQLite trace storage,
+          live replay/comparison, and local debugging. The core supports compatible HTTP
+          and versioned subprocess provider plugins. Local servers and fixture plugins
+          work without provider accounts; remote credentials remain provider-specific.
+          Example configuration and requests are included in every archive.
+
+          ## Install
+
+          With Node.js 22 or newer:
+
+          \`\`\`sh
+          npx olyx-cli --help
+          \`\`\`
+
+          To install the short command:
+
+          \`\`\`sh
+          npm install -g olyx-cli
+          oy --help
+          \`\`\`
+
+          npm packages must be published separately before these commands are available.
+          See https://docs.olyxai.io/getting-started/installation/ for setup.
+          EOF
+
+      - name: Publish release
+        if: ${{ github.event_name == 'push' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${RELEASE_TAG}" \
+            --title "${RELEASE_TAG}" \
+            --notes-file dist/RELEASE_NOTES.md \
+            --verify-tag \
+            dist/SHA256SUMS.txt \
+            "dist/olyx-${RELEASE_TAG}-x86_64-unknown-linux-musl.tar.gz" \
+            "dist/olyx-${RELEASE_TAG}-x86_64-unknown-linux-musl.tar.gz.sha256" \
+            "dist/olyx-${RELEASE_TAG}-x86_64-unknown-linux-musl.tar.gz.bundle" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-unknown-linux-musl.tar.gz" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-unknown-linux-musl.tar.gz.sha256" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-unknown-linux-musl.tar.gz.bundle" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz.sha256" \
+            "dist/olyx-${RELEASE_TAG}-aarch64-apple-darwin.tar.gz.bundle"

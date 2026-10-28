@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible problem in the public Olyx CLI.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please keep it focused and reproducible.
+        Do not include API keys, trace database files, customer payloads, or provider secrets.
+  - type: input
+    id: version
+    attributes:
+      label: CLI version
+      placeholder: oy 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 14 arm64, Ubuntu 22.04 x86_64
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: Include the command shape, but redact secrets.
+      placeholder: oy route --config examples/olyx.json --input examples/request.json
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Links, logs, or screenshots with secrets removed.

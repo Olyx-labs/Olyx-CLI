@@ -1,0 +1,20 @@
+services:
+  olyx:
+    build: .
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set your provider API key}
+      OLYX_SERVER_API_KEY: ${OLYX_SERVER_API_KEY:?Set an application access token}
+    volumes:
+      - olyx-data:/data
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 60s
+volumes:
+  olyx-data:
