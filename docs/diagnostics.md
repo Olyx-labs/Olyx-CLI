@@ -144,3 +144,8 @@ status 130. Inspect the trace with `oy debug TRACE_ID`; its diagnostic code is
 `request_cancelled`. Partial output does not count as a completed response.
 Upstream usage may already have occurred. Forced termination such as SIGKILL
 cannot perform this cleanup.
+
+`oy doctor` also reports the CLI version, configuration path, whether the file
+exists, and the resolved database path. These details are available in the same
+JSON report as the setup checks. A missing or invalid configuration exits nonzero;
+`oy check FILE` provides configuration validation details for automation.

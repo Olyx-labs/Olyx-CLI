@@ -25,3 +25,5 @@ their own runtime.
 
 [Documentation](https://docs.olyxai.io/getting-started/quickstart/) ·
 [Source](https://github.com/Olyx-labs/Olyx-CLI)
+
+`npx olyx-cli doctor` and installed `oy doctor` invoke the same native CLI.

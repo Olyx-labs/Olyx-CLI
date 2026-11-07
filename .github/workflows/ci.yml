@@ -23,14 +23,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22
-
-      - name: npm launcher checks
-        run: node --test npm/launcher.test.cjs
-
       - name: Install Rust
         run: |
           rustup toolchain install "${RUST_VERSION}" --profile minimal --component clippy,rustfmt --no-self-update
@@ -46,8 +38,8 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
-      - name: Account-free provider checks
-        run: python3 scripts/test-providers
+      - name: Workspace tests
+        run: cargo test --locked --workspace
 
       - name: Install cargo-deny
         run: |
@@ -64,4 +56,3 @@ jobs:
       - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0
       - run: docker build -t olyx:test .
       - run: docker run --rm olyx:test check /etc/olyx/olyx.json
-      - run: python3 scripts/smoke-container.py olyx:test

@@ -20,7 +20,7 @@ Keys stay in environment variables. With one recognized provider credential,
 `--base-url` for another provider or endpoint. Some providers require an explicit
 model identifier. Run `oy help init` for syntax.
 
-Use `oy serve --local` to enforce loopback-only binding.
+`oy serve` binds to localhost by default.
 
 The server defaults to `127.0.0.1:8787`. Configure an application access token with
 `OLYX_SERVER_API_KEY`; it is required when binding to a non-loopback address.

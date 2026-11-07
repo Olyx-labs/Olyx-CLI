@@ -1,6 +1,11 @@
 use crate::error::CliError;
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, fs::OpenOptions, io::Write, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs::OpenOptions,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 const PROVIDERS: &[(&str, &str, &str, &str, Option<&str>)] = &[
     (
@@ -58,8 +63,7 @@ fn configuration(
     }
     let entry = json!([{"protocol":protocol,"base_url":base,"model":model,"api_key_env":key}]);
     let mut models = BTreeMap::new();
-    models.insert(alias, entry.clone());
-    models.insert(model, entry);
+    models.insert(alias, entry);
     let value = json!({"models":models});
     let parsed: olyx_local_runtime::config::Config =
         serde_json::from_value(value.clone()).map_err(|e| CliError::message(e.to_string()))?;
@@ -107,7 +111,118 @@ pub(crate) fn create(
     );
     Ok(())
 }
+/// Generate an account-free adapter scaffold; the user supplies inference logic.
+pub(crate) fn create_plugin(
+    path: &str,
+    python: &str,
+    model: &str,
+    alias: &str,
+) -> Result<(), CliError> {
+    let interpreter = Path::new(python);
+    if !interpreter.is_absolute() || !interpreter.is_file() {
+        return Err(CliError::usage(
+            "--plugin requires an absolute path to an installed Python interpreter",
+        ));
+    }
+    let config = Path::new(path);
+    let directory = config
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if matches!(
+        config.file_name().and_then(|name| name.to_str()),
+        Some("request.json" | "adapter.py" | "olyx_plugin.py")
+    ) {
+        return Err(CliError::usage(
+            "configuration path conflicts with a generated scaffold file",
+        ));
+    }
+    std::fs::create_dir_all(directory).map_err(|e| CliError::message(e.to_string()))?;
+    let script = directory
+        .canonicalize()
+        .map_err(|e| CliError::message(e.to_string()))?
+        .join("adapter.py");
+    let value = json!({"models":{alias:[{"protocol":"plugin","model":model,"plugin":{
+        "command":python,"args":[script],"capabilities":["chat"]
+    }}]}});
+    let parsed: olyx_local_runtime::config::Config =
+        serde_json::from_value(value.clone()).map_err(|e| CliError::message(e.to_string()))?;
+    parsed
+        .validate()
+        .map_err(|e| CliError::message(e.to_string()))?;
+    let files = vec![
+        (
+            directory.join("adapter.py"),
+            include_bytes!("../examples/plugins/adapter.py").to_vec(),
+        ),
+        (
+            directory.join("olyx_plugin.py"),
+            include_bytes!("../examples/plugins/olyx_plugin.py").to_vec(),
+        ),
+        (
+            directory.join("request.json"),
+            json_bytes(&json!({"model":alias,"messages":[{"role":"user","content":"Hello!"}]}))?,
+        ),
+        (config.to_path_buf(), json_bytes(&value)?),
+    ];
+    write_scaffold(&files)?;
+    println!("Created {} and a Python chat adapter scaffold. Implement chat() in {} before making requests. No inference is implemented or verified by the scaffold. Plugins run as trusted local programs.", config.display(), script.display());
+    Ok(())
+}
+fn json_bytes(value: &Value) -> Result<Vec<u8>, CliError> {
+    let mut bytes =
+        serde_json::to_vec_pretty(value).map_err(|e| CliError::message(e.to_string()))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
 fn write_new(path: &Path, value: &Value) -> Result<(), CliError> {
+    write_new_bytes(path, &json_bytes(value)?)
+}
+fn write_scaffold(files: &[(PathBuf, Vec<u8>)]) -> Result<(), CliError> {
+    let mut destinations = std::collections::BTreeSet::new();
+    for (path, _) in files {
+        if !destinations.insert(path) || path.exists() || path.is_symlink() {
+            return Err(CliError::usage(format!(
+                "{} already exists or conflicts with another scaffold file",
+                path.display()
+            )));
+        }
+    }
+    write_scaffold_with(files, |file, bytes| file.write_all(bytes))
+}
+fn write_scaffold_with(
+    files: &[(PathBuf, Vec<u8>)],
+    mut write: impl FnMut(&mut std::fs::File, &[u8]) -> std::io::Result<()>,
+) -> Result<(), CliError> {
+    let mut created = Vec::new();
+    let result = (|| {
+        for (path, bytes) in files {
+            let mut file = open_new(path)?;
+            created.push(path);
+            write(&mut file, bytes)
+                .map_err(|e| CliError::message(format!("cannot write {}: {e}", path.display())))?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let mut cleanup = Vec::new();
+        for path in created.into_iter().rev() {
+            if let Err(e) = std::fs::remove_file(path) {
+                cleanup.push(format!("{}: {e}", path.display()));
+            }
+        }
+        return if cleanup.is_empty() {
+            Err(error)
+        } else {
+            Err(CliError::message(format!(
+                "{error}; could not clean up: {}",
+                cleanup.join(", ")
+            )))
+        };
+    }
+    Ok(())
+}
+fn open_new(path: &Path) -> Result<std::fs::File, CliError> {
     let mut options = OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
@@ -115,12 +230,13 @@ fn write_new(path: &Path, value: &Value) -> Result<(), CliError> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options
+    options
         .open(path)
-        .map_err(|e| CliError::message(format!("cannot create {}: {e}", path.display())))?;
-    let bytes = serde_json::to_vec_pretty(value).map_err(|e| CliError::message(e.to_string()))?;
-    file.write_all(&bytes)
-        .and_then(|_| file.write_all(b"\n"))
+        .map_err(|e| CliError::message(format!("cannot create {}: {e}", path.display())))
+}
+fn write_new_bytes(path: &Path, bytes: &[u8]) -> Result<(), CliError> {
+    open_new(path)?
+        .write_all(bytes)
         .map_err(|e| CliError::message(e.to_string()))
 }
 #[cfg(test)]
@@ -132,7 +248,7 @@ mod tests {
             configuration(None, None, "fast", None, |n| n == "OPENAI_API_KEY").unwrap();
         assert_eq!(key, "OPENAI_API_KEY");
         assert_eq!(cfg["models"]["fast"][0]["protocol"], "openai");
-        assert!(cfg["models"].get("gpt-4o-mini").is_some());
+        assert_eq!(cfg["models"].as_object().unwrap().len(), 1);
     }
     #[test]
     fn ambiguous_keys_and_missing_huggingface_models_are_explicit() {
@@ -149,4 +265,12 @@ mod tests {
         assert_eq!(key, "HF_TOKEN");
         assert_eq!(config["models"]["fast"][0]["model"], "example/model");
     }
+}
+
+#[cfg(all(test, private_regression_tests))]
+mod private_regression_tests {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/private-tests/init.rs"
+    ));
 }

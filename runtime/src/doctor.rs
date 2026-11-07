@@ -4,6 +4,8 @@ use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path, time::Duration};
 
 pub async fn run(path: &str, probe: bool) -> Value {
+    let mut report =
+        json!({"config":path,"config_exists":Path::new(path).is_file(),"network_probes":probe});
     let mut checks = Vec::new();
     let config = match Config::load(path) {
         Ok(config) => {
@@ -11,7 +13,9 @@ pub async fn run(path: &str, probe: bool) -> Value {
             config
         }
         Err(_) => {
-            return json!({"ok":false,"checks":[{"check":"configuration","status":"fail","message":"Configuration could not be read or validated.","hint":"Check the file path and run oy check FILE for validation details."}]});
+            report["ok"] = json!(false);
+            report["checks"] = json!([{"check":"configuration","status":"fail","message":"Configuration could not be read or validated.","hint":"Check the file path and run oy check FILE for validation details."}]);
+            return report;
         }
     };
     let variables: BTreeSet<_> = config
@@ -55,7 +59,10 @@ pub async fn run(path: &str, probe: bool) -> Value {
             checks.push(json!({"check":"provider_connectivity","status":"fail","message":"Could not initialize the network client."}));
         }
     }
-    json!({"ok":checks.iter().all(|c| c["status"] != "fail"),"network_probes":probe,"checks":checks})
+    report["database"] = json!(config.database);
+    report["ok"] = json!(checks.iter().all(|c| c["status"] != "fail"));
+    report["checks"] = json!(checks);
+    report
 }
 
 fn storage(database: &str) -> Result<&'static str, ()> {

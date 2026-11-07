@@ -1,6 +1,20 @@
 # Changelog
 
-## 0.2.0 — prepared for release
+## 0.2.1 — 2026-11-07
+
+- Prevent plugin scaffold path collisions and clean up partial file writes.
+- Simplify command parsing and share provider-attempt and usage-cost accounting.
+
+- Use `oy doctor` for setup checks, version, configuration, and database details;
+  remove the separate `inspect` command.
+- Serve on localhost by default; remove `serve --local`. Remote binding still
+  requires `OLYX_SERVER_API_KEY`.
+- Generate one model alias and consistent command help and argument validation.
+- Add `oy init --plugin /absolute/path/to/python3 --model MODEL` to generate a
+  chat adapter scaffold with a standard-library protocol helper.
+- Keep live provider certification as a separate, explicit command.
+
+## 0.2.0
 
 - Send `X-Content-Type-Options: nosniff` on HTTP responses.
 - Authenticate application API requests before reading JSON bodies, rejecting

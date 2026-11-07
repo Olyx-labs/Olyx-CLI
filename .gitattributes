@@ -1,0 +1,10 @@
+# Private development material must not enter public source exports.
+/AGENTS.md export-ignore
+/private-tests export-ignore
+
+# Account-free integration and packaging regression checks stay in development.
+/scripts/test export-ignore
+/scripts/smoke-*.py export-ignore
+/scripts/test_*.py export-ignore
+/npm/launcher.test.cjs export-ignore
+/.github/workflows/private-checks.yml export-ignore

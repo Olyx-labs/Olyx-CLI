@@ -12,6 +12,48 @@ migrated to a compatible HTTP endpoint or a plugin. Native APIs are extension
 work, not claimed built-in support. Hugging Face is an optional compatible
 endpoint and is not required by the core.
 
+## Start with a Python scaffold
+
+In a new directory, use the absolute path to an installed Python interpreter:
+
+```sh
+oy init --plugin /absolute/path/to/python3 --model YOUR_MODEL
+```
+
+This creates `olyx.json`, `request.json`, `adapter.py`, and `olyx_plugin.py`.
+Implement `chat(model, request)` in `adapter.py` using your existing SDK, service,
+or local model. Return an OpenAI-compatible completion object. The helper handles
+the v1 handshake, JSON events, and safe error output using the Python standard
+library; it does not implement inference. The generated adapter deliberately
+fails until you connect a model.
+
+```python
+from olyx_plugin import serve
+
+def chat(model, request):
+    # Call the client or model you already use here.
+    result = your_client.complete(model=model, messages=request["messages"])
+    return {"choices": [{"message": {"role": "assistant", "content": result.text},
+                         "finish_reason": "stop"}]}
+
+if __name__ == "__main__":
+    serve(chat)
+```
+
+The scaffold declares chat only. Streaming, tools, and embeddings need an adapter
+that implements those capabilities; do not add declarations without implementing
+them. It does not overwrite existing files or add a credential requirement.
+Keep credentials in environment variables. Plugins run as trusted local programs.
+
+After implementing your adapter:
+
+```sh
+oy doctor
+oy route --input request.json
+```
+
+A successful fixture response verifies the contract, not real model inference.
+
 ## Configure an adapter
 
 ```json
@@ -124,16 +166,6 @@ refresh, plugin signing, sandboxing, or upstream certification.
 synthetic vectors and tool calls, and never contacts a provider. It is a test
 fixture, not a model. Use it as a starting point for a fixture mode in a real
 adapter, keeping SDK calls behind a separately tested translation layer.
-
-```sh
-./scripts/test-providers
-python3 scripts/smoke-plugins.py target/debug/oy
-```
-
-The core contract smoke checks CLI and HTTP chat, streaming, tools, embedding
-batches, trace persistence, replay immutability, capabilities, version errors,
-malformed output, timeouts, child failures, environment isolation, eligible
-fallback, and no fallback after partial output. It requires no provider account.
 
 Test an independently developed adapter using its fixture configuration:
 
