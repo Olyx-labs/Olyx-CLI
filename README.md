@@ -1,88 +1,75 @@
 # Olyx CLI
 
-## What is Olyx?
+Olyx routes requests to AI models and records what happened in a local SQLite
+database. Send a request, inspect its trace, and replay it against another
+configured model. Use Olyx from your terminal or through an OpenAI-compatible
+HTTP server.
 
-Olyx is a command-line tool for working with AI models. Send a request, inspect
-what happened, and run it again against another model. Use it in your terminal
-or as an HTTP endpoint for your application.
+Connect OpenAI, Hugging Face, a local model server, or an independent provider
+plugin. SQLite is bundled; a database server is not required.
 
-Connect Hugging Face, OpenAI, a local model server, or your own provider plugin.
-Olyx stores requests, responses, and provider attempts in a local SQLite database.
+## Installation
 
-## How it works
+[Download Olyx 0.2.1 from GitHub Releases](https://github.com/Olyx-labs/Olyx-CLI/releases/tag/v0.2.1).
+Choose the archive for macOS Apple Silicon, Linux x64, or Linux ARM64. Extract
+it and put the `oy` executable in a directory on your `PATH`. No Node.js or Rust
+installation is needed for these binaries.
 
-### Routing
-
-Give a model a name, such as `fast`, in your configuration. This name is an
-alias: your requests use it instead of a provider-specific model name. Each
-alias can list several providers, which Olyx tries in order.
-
-Connection failures, rate limits, and provider server errors can trigger the
-next provider. Invalid requests and authentication errors stop the request.
-Once streaming output begins, Olyx does not switch providers.
-
-### Traces and replay
-
-Each request gets a trace ID. Use `oy debug` to inspect its inputs, responses,
-providers tried, and time taken. Use `oy replay` to send the recorded request
-again or compare configured models. Replay makes new provider calls and keeps
-the original trace.
-
-### Use with an application
-
-`oy serve` runs an HTTP server with OpenAI-compatible Chat Completions,
-embeddings, and model-list endpoints. It uses the same configuration and local
-trace database as the terminal commands. Your application still runs tools,
-loads documents, and searches its own data.
-
-## Getting started
-
-### 1. Run Olyx
-
-With Node.js 22 or newer:
+Follow the [installation guide](https://docs.olyxai.io/getting-started/installation/)
+for platform-specific setup, checksum verification, and building from source.
+Check the installed version:
 
 ```sh
-npx olyx-cli --help
+oy --version
 ```
 
-npm installs the matching executable for macOS Apple Silicon or Linux x64/arm64. Rust and a database server are not required; SQLite is bundled.
-External plugins may have their own runtime requirements.
-
-To use the shorter `oy` command throughout this guide:
-
-```sh
-npm install -g olyx-cli
+```text
+oy 0.2.1
 ```
 
-The commands are equivalent: `npx olyx-cli doctor` runs the same command as
-installed `oy doctor`. This guide uses `oy` from here onward. For a source checkout, see the
-[contributor installation guide](https://docs.olyxai.io/getting-started/installation/#build-from-source-contributors).
+The npm distribution requires Node.js 22 or newer and currently provides
+**0.2.0**. Use the GitHub download for 0.2.1 until its npm packages are published.
+External plugins may require their own language runtime.
 
-### 2. Connect a model
+## Quickstart
 
-In a new project directory, run one of the following examples.
+This walkthrough uses an OpenAI API key with access to `gpt-4o-mini` and
+sufficient API credit. Requests and replays make provider calls and may incur
+charges. For a local model or another provider, see [provider setup](docs/providers.md).
 
-For Hugging Face, select a model available through its Inference Providers router:
+### 1. Create a project
 
-```sh
-export HF_TOKEN=your-hugging-face-token
-oy init --provider huggingface --model YOUR_HF_MODEL_ID
-```
-
-Or use OpenAI:
+Replace `YOUR_OPENAI_API_KEY` with your provider key, then run:
 
 ```sh
-export OPENAI_API_KEY=your-provider-key
+mkdir olyx-example
+cd olyx-example
+export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
 oy init --provider openai
 ```
 
-`init` creates `olyx.json` and a sample `request.json` in the same directory.
-The configuration defines a `fast` alias and reads your API key from the
-environment; the key is not saved to either file. An existing configuration
-stops initialization. An existing request file is kept.
-For a local model or another endpoint, see [provider setup](docs/providers.md).
+`init` creates `olyx.json` and `request.json`. It reads credentials from your
+environment without saving them to either file. An existing configuration stops
+initialization; an existing request file is kept.
 
-### 3. Send a request
+The configuration names the model `fast`. This alias lets you change the
+underlying provider or model without changing your requests. The generated
+`request.json` contains:
+
+```json
+{
+  "model": "fast",
+  "messages": [
+    {"role": "user", "content": "Hello!"}
+  ]
+}
+```
+
+### 2. Send a request
+
+Olyx records prompts, responses, and provider attempts in `data/traces.db`,
+relative to the configuration file. Keep this database private. See
+[storage and backups](docs/storage.md) for retention and backup options.
 
 ```sh
 oy check olyx.json
@@ -90,16 +77,53 @@ oy route --input request.json
 ```
 
 `check` validates the configuration without calling a provider. `route` sends
-the request to the configured model and saves a trace. Its JSON response
-contains `trace_id` and `output`. Replace `TRACE_ID` below
-with the returned ID:
+the request and returns JSON. Here is a shortened example; your trace ID and
+model response will differ:
+
+```json
+{
+  "trace_id": "trace_...",
+  "output": {
+    "choices": [
+      {"message": {"role": "assistant", "content": "Hello! How can I help?"}}
+    ]
+  }
+}
+```
+
+If setup fails, run `oy doctor --config olyx.json`. It checks configuration,
+required credentials, and storage access without making inference calls.
+See [troubleshooting](docs/diagnostics.md) for interpreting failures.
+
+### 3. Inspect and replay
+
+Replace `TRACE_ID` with the ID returned by `route`:
 
 ```sh
 oy debug TRACE_ID
 oy replay TRACE_ID
 ```
 
-To stream a response, save this as `streaming-request.json`:
+`debug` shows the recorded request, provider attempts, response, and timing.
+`replay` makes a new provider call and preserves the original trace. See the
+[command reference](https://docs.olyxai.io/reference/cli/) for comparing models.
+
+## Optional workflows
+
+### Configure fallback providers
+
+An alias can list providers in the order Olyx should try them. Connection
+failures, rate limits, and provider server errors can trigger fallback.
+Invalid requests and authentication errors stop the request. For HTTP
+providers, Olyx does not fall back after a successful HTTP response, including
+when its content cannot be decoded or a stream ends early.
+
+See [providers and local models](docs/providers.md) for configuration examples,
+including Hugging Face and account-free local endpoints.
+
+### Stream a response
+
+Save this as `streaming-request.json`:
 
 ```json
 {
@@ -113,73 +137,53 @@ To stream a response, save this as `streaming-request.json`:
 oy route --input streaming-request.json
 ```
 
-Olyx prints each update as a JSON line, followed by a completed event with the
-trace ID. To use another configuration file, pass `--config FILE` or set
-`OLYX_CONFIG`.
+Olyx prints updates as JSON lines, followed by a completed event with the trace
+ID. Pass `--config FILE` or set `OLYX_CONFIG` to use another configuration.
 
-### 4. Connect an application
+### Connect an application
+
+`oy serve` exposes OpenAI-compatible Chat Completions, embeddings, and model-list
+endpoints. Your application still runs tools, loads documents, and searches data.
+
+Choose an application secret, distinct from your provider key, and replace
+`YOUR_APPLICATION_SECRET` below:
 
 ```sh
-export OLYX_SERVER_API_KEY=your-application-secret
+export OLYX_SERVER_API_KEY="YOUR_APPLICATION_SECRET"
 oy serve
 ```
 
-Point your application's compatible client at `http://127.0.0.1:8787/v1`, use
-`fast` as the model, and send the application secret as its API key. This is
-separate from your provider key. `127.0.0.1` refers to the machine running
-the server. By default, it only accepts connections from that machine.
+Keep this terminal running. Point your client at `http://127.0.0.1:8787/v1`,
+use `fast` as its model, and use the application secret as its API key. The
+server accepts connections from the same machine by default.
 
-For example, keep the server running and send a request from another terminal:
-
-```sh
-export OLYX_SERVER_API_KEY=your-application-secret
-curl http://127.0.0.1:8787/v1/chat/completions \
-  -H "Authorization: Bearer $OLYX_SERVER_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"fast","messages":[{"role":"user","content":"Hello!"}]}'
-```
-
-See [application integration](docs/deployment.md) for remote serving, Docker
-Compose, authentication, and persistent storage. Non-loopback listeners require
+See [application integration](docs/deployment.md) for a complete client example,
+remote serving, Docker, and authentication. Non-loopback listeners require
 `OLYX_SERVER_API_KEY`.
 
 ## Documentation
 
-- [Getting started](https://docs.olyxai.io/getting-started/quickstart/)
+- [Quickstart guide](https://docs.olyxai.io/getting-started/quickstart/)
 - [Command reference](https://docs.olyxai.io/reference/cli/)
-- [Providers and local models](docs/providers.md)
 - [Provider plugins](docs/plugins.md)
 - [Embeddings and RAG](docs/rag.md)
 - [Storage and backups](docs/storage.md)
 - [Troubleshooting](docs/diagnostics.md)
 
-Run `oy help` for commands or `oy help COMMAND` for a specific command.
-If setup fails, start with:
-
-```sh
-oy doctor --config olyx.json
-```
-
-This checks the configuration, required API-key variables, and access to local
-storage. It does not call a model or verify your provider account.
-
-Traces contain application inputs and outputs. Keep the database private and
-review traces before sharing them. CLI output masks recognizable API keys and other credentials,
-but can still contain sensitive application data.
+Run `oy help` or `oy help COMMAND` for command-specific options.
 
 ## Contributing
 
-See the [contributing guide](https://github.com/Olyx-labs/Olyx-CLI/blob/master/CONTRIBUTING.md)
-for development setup. From a public source checkout, run:
+Issues and documentation feedback are welcome. External code contributions are
+closed during beta; see the [contributing guide](CONTRIBUTING.md) for the current
+policy and development setup. From a source checkout, run:
 
 ```sh
 cargo test --locked --workspace
 ```
 
-See [provider verification](docs/provider-testing.md) for optional live checks.
-
-Report vulnerabilities through the [security policy](https://github.com/Olyx-labs/Olyx-CLI/blob/master/SECURITY.md).
-Release procedures are in the [maintainer guide](https://github.com/Olyx-labs/Olyx-CLI/blob/master/RELEASING.md).
+Report vulnerabilities through the [security policy](SECURITY.md).
+Maintainers can follow the [release guide](RELEASING.md).
 
 ## License
 
