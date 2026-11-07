@@ -1,3 +1,4 @@
+mod attempt;
 pub mod config;
 mod diagnostics;
 pub mod doctor;
@@ -9,6 +10,7 @@ pub mod server;
 mod sse;
 pub mod store;
 mod trace_guard;
+mod usage_cost;
 pub use trace_guard::wait_for_cancelled_traces;
 
 use config::Config;
@@ -189,47 +191,32 @@ impl State {
         };
         let mut last_failure = None;
         for candidate in candidates {
+            let attempt = attempt::Attempt::new(self, trace_id, candidate, &requested, &prepared);
             let mut payload = prepared.clone();
             payload["model"] = json!(candidate.model);
             if candidate.protocol == config::Protocol::Plugin {
                 let started = Instant::now();
                 let mut partial = Value::Null;
-                let result = plugin::execute(candidate, "chat", &payload, self.provider_keys.get(&candidate.api_key_env).map(String::as_str), 8_388_608, &mut |output| {
+                let result = plugin::execute(candidate, "chat", &payload, attempt.optional_credential(), 8_388_608, &mut |output| {
                     partial=output.clone();
                     emit(json!({"type":"snapshot","trace_id":trace_id,"model":candidate.model,"output":output}))
                 }).await;
                 match result {
                     Ok(output) => {
-                        let cost = (output["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as f64
-                            * candidate.input_per_million
-                            + output["usage"]["completion_tokens"].as_u64().unwrap_or(0) as f64
-                                * candidate.output_per_million)
-                            / 1_000_000.0;
-                        self.store
-                            .lock()
-                            .await
-                            .record(
-                                trace_id,
-                                &candidate.model,
-                                &prepared,
-                                &output,
-                                (cost, started.elapsed().as_millis(), true),
-                            )
-                            .map_err(storage_error)?;
+                        let cost =
+                            usage_cost::chat(candidate, &output, usage_cost::MissingUsage::Zero);
+                        attempt
+                            .record(&output, (cost, started.elapsed().as_millis(), true))
+                            .await?;
                         return Ok(output);
                     }
                     Err(error) => {
-                        self.store
-                            .lock()
-                            .await
+                        attempt
                             .record(
-                                trace_id,
-                                &candidate.model,
-                                &prepared,
                                 &json!({"reason":error.code,"partial_output":partial}),
                                 (0.0, started.elapsed().as_millis(), false),
                             )
-                            .map_err(storage_error)?;
+                            .await?;
                         if partial.is_null()
                             && matches!(
                                 error.code.as_str(),
@@ -243,67 +230,40 @@ impl State {
                     }
                 }
             }
-            let request = match self.provider_keys.get(&candidate.api_key_env) {
-                Some(key) => provider::request(&self.client, candidate, &payload, key),
-                None if candidate.api_key_env.is_empty() => {
-                    provider::request(&self.client, candidate, &payload, "")
-                }
-                None => Err(diagnostics::missing_credential(candidate, &requested)),
-            };
+            let request = attempt
+                .credential()
+                .and_then(|key| provider::request(&self.client, candidate, &payload, key));
             let request = match request {
                 Ok(request) => request,
                 Err(error) => {
-                    self.store
-                        .lock()
-                        .await
+                    attempt
                         .record(
-                            trace_id,
-                            &candidate.model,
-                            &prepared,
                             &json!({"reason":error.code,"request_sent":false}),
                             (0.0, 0, false),
                         )
-                        .map_err(storage_error)?;
+                        .await?;
                     return Err(error);
                 }
             };
-            let output_limit = payload
-                .get("max_completion_tokens")
-                .or_else(|| payload.get("max_tokens"))
-                .and_then(Value::as_u64)
-                .unwrap_or(self.config.policy.max_output_tokens);
-            // Local telemetry estimate when the provider does not report token usage.
-            let estimated_cost = ((payload.to_string().len() + 4096) as f64
-                * candidate.input_per_million
-                + output_limit as f64 * candidate.output_per_million)
-                / 1_000_000.0;
+            let estimated_cost = usage_cost::estimate_chat(
+                candidate,
+                &payload,
+                self.config.policy.max_output_tokens,
+            );
             let started = Instant::now();
-            let response = request.send().await;
-            let response = match response {
+            let response = match attempt.send(request, started).await {
                 Ok(response) => response,
-                Err(_) => {
-                    self.store.lock().await.record(trace_id,&candidate.model,&prepared,
-                        &json!({"reason":"provider_transport_failure","provider":candidate.base_url}),(0.0, started.elapsed().as_millis(), false)).map_err(storage_error)?;
-                    last_failure = Some(diagnostics::provider_failure(candidate, &requested, None));
-                    continue;
-                }
-            };
-            if !response.status().is_success() {
-                self.store.lock().await.record(trace_id,&candidate.model,&prepared,
-                    &json!({"reason":"provider_rejected_request","status":response.status().as_u16(),"provider":candidate.base_url}),(0.0, started.elapsed().as_millis(), false)).map_err(storage_error)?;
-                let retry =
-                    response.status().is_server_error() || response.status().as_u16() == 429;
-                let error = diagnostics::provider_failure(
-                    candidate,
-                    &requested,
-                    Some(response.status().as_u16()),
-                );
-                if retry {
+                Err(error)
+                    if error
+                        .diagnostic
+                        .as_ref()
+                        .is_some_and(|diagnostic| diagnostic.retryable) =>
+                {
                     last_failure = Some(error);
                     continue;
                 }
-                return Err(error);
-            }
+                Err(error) => return Err(error),
+            };
             let streaming = prepared["stream"].as_bool() == Some(true);
             let mut partial = Value::Null;
             let output = match provider::read(response, streaming, &mut |output| {
@@ -312,35 +272,20 @@ impl State {
             }).await {
                 Ok(output) => output,
                 Err(error) => {
-                    self.store.lock().await.record(trace_id, &candidate.model, &prepared,
-                        &json!({"reason":error.code,"partial_output":partial}), (estimated_cost, started.elapsed().as_millis(), false)).map_err(storage_error)?;
+                    attempt.record(&json!({"reason":error.code,"partial_output":partial}), (estimated_cost, started.elapsed().as_millis(), false)).await?;
                     // Never fall back after a successful HTTP response: streaming may
                     // already have delivered content or incurred upstream usage.
                     return Err(diagnostics::response_failure(error, candidate, &requested));
                 }
             };
-            let cost = match (
-                output["usage"]["prompt_tokens"].as_u64(),
-                output["usage"]["completion_tokens"].as_u64(),
-            ) {
-                (Some(input), Some(output)) => {
-                    (input as f64 * candidate.input_per_million
-                        + output as f64 * candidate.output_per_million)
-                        / 1_000_000.0
-                }
-                _ => estimated_cost,
-            };
-            self.store
-                .lock()
-                .await
-                .record(
-                    trace_id,
-                    &candidate.model,
-                    &prepared,
-                    &output,
-                    (cost, started.elapsed().as_millis(), true),
-                )
-                .map_err(storage_error)?;
+            let cost = usage_cost::chat(
+                candidate,
+                &output,
+                usage_cost::MissingUsage::Estimate(estimated_cost),
+            );
+            attempt
+                .record(&output, (cost, started.elapsed().as_millis(), true))
+                .await?;
             return Ok(output);
         }
         Err(last_failure

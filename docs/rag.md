@@ -33,11 +33,10 @@ oy check examples/rag.json
 oy serve --config examples/rag.json
 ```
 
-For local experimentation and CI, add `--local` to the serve command to enforce
-loopback-only binding:
+For local experimentation and CI, use the default localhost listener:
 
 ```sh
-oy serve --local --config examples/rag.json
+oy serve --config examples/rag.json
 ```
 
 `OLYX_SERVER_API_KEY` authenticates applications to your server. It is separate

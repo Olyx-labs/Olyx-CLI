@@ -16,7 +16,7 @@ def main():
         files = [entry.name for entry in bundle.getmembers() if entry.isfile()]
         assert all(entry.isfile() or entry.isdir() for entry in bundle.getmembers()), "unexpected archive member type"
     required = {f"{root}/{name}" for name in ["oy", "LICENSE", "NOTICE",
-                "README.md", "README.txt", "CHANGELOG.md", "SECURITY.md", "examples/olyx.json", "examples/request.json", "examples/providers.json", "examples/fallbacks.json", "examples/rag.json", "examples/rag.py", "docs/storage.md", "docs/providers.md", "docs/deployment.md", "docs/rag.md", "docs/diagnostics.md", "examples/ollama.json", "examples/plugins/echo.py", "docs/plugins.md", "docs/provider-testing.md", "scripts/test-plugin", "scripts/certify-providers.py"]}
+                "README.md", "README.txt", "CHANGELOG.md", "SECURITY.md", "examples/olyx.json", "examples/request.json", "examples/providers.json", "examples/fallbacks.json", "examples/rag.json", "examples/rag.py", "docs/storage.md", "docs/providers.md", "docs/deployment.md", "docs/rag.md", "docs/diagnostics.md", "examples/ollama.json", "examples/plugins/echo.py", "examples/plugins/adapter.py", "examples/plugins/olyx_plugin.py", "docs/plugins.md", "docs/provider-testing.md", "scripts/test-plugin", "scripts/certify-providers.py"]}
     assert len(files) == len(set(files)), "duplicate archive member"
     assert set(files) == required, "archive contents do not match the public release allowlist"
     assert all(".." not in PurePosixPath(name).parts and not PurePosixPath(name).is_absolute() for name in files)

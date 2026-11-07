@@ -1,6 +1,5 @@
 use std::fmt;
 
-use crate::help::{help_text, HelpTopic};
 use crate::redact::sanitize_text_for_output;
 
 #[derive(Debug)]
@@ -13,7 +12,7 @@ impl CliError {
     pub(crate) fn usage(message: impl Into<String>) -> Self {
         let message = sanitize_text_for_output(&message.into());
         Self {
-            message: format!("{message}\n\n{}", help_text(HelpTopic::General)),
+            message,
             exit_code: 2,
         }
     }

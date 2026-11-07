@@ -1,13 +1,11 @@
 #![forbid(unsafe_code)]
 mod command;
 mod error;
-mod help;
 mod init;
 mod input;
 mod redact;
-use command::Command;
+use command::{Command, Invocation, ParsedInvocation};
 use error::CliError;
-use help::help_text;
 use redact::sanitize_json_for_output;
 use serde_json::{json, Value};
 use std::{env, process};
@@ -20,7 +18,13 @@ async fn main() {
     }
 }
 async fn run(args: Vec<String>) -> Result<(), CliError> {
-    let invocation = Invocation::parse(args)?;
+    let invocation = match Invocation::parse(args)? {
+        ParsedInvocation::Run(invocation) => invocation,
+        ParsedInvocation::Display(text) => {
+            print!("{text}");
+            return Ok(());
+        }
+    };
     if matches!(
         invocation.command,
         Command::Route { .. } | Command::Replay { .. }
@@ -51,9 +55,15 @@ async fn run_invocation(invocation: Invocation) -> Result<(), CliError> {
             model,
             alias,
             base_url,
+            plugin,
         } => {
-            if invocation.dry_run {
-                return Err(CliError::usage("init does not accept --dry-run"));
+            if let Some(python) = plugin {
+                return init::create_plugin(
+                    &invocation.config,
+                    &python,
+                    model.as_deref().expect("parser requires model"),
+                    &alias,
+                );
             }
             init::create(
                 &invocation.config,
@@ -64,30 +74,29 @@ async fn run_invocation(invocation: Invocation) -> Result<(), CliError> {
             )
         }
         Command::Serve {
-            local,
-            listen,
+            host,
+            port,
             max_concurrency,
         } => {
-            if invocation.dry_run {
-                return Err(CliError::usage("serve does not accept --dry-run"));
-            }
-            if local && !listen.ip().is_loopback() {
-                return Err(CliError::usage("serve --local requires a loopback address"));
-            }
+            let listen = std::net::SocketAddr::new(host, port);
             let config = load_config(&invocation.config)?;
             let api_key = env::var("OLYX_SERVER_API_KEY").ok();
-            olyx_local_runtime::server::serve(config, listen, api_key, max_concurrency)
+            olyx_local_runtime::server::serve(config, listen, api_key, usize::from(max_concurrency))
                 .await
                 .map_err(|e| CliError::message(e.to_string()))
         }
-        Command::Route { model, input } => {
+        Command::Route {
+            model,
+            input,
+            dry_run,
+        } => {
             let path = &invocation.config;
             let config = load_config(path)?;
             let mut body = input::read_request(&input, config.policy.max_body_bytes)?;
             if let Some(model) = model {
                 body["model"] = json!(model);
             }
-            if invocation.dry_run {
+            if dry_run {
                 return print_json(&json!({"local":true,"request":body,"config":path}));
             }
             let state = olyx_local_runtime::State::new(config)
@@ -112,10 +121,8 @@ async fn run_invocation(invocation: Invocation) -> Result<(), CliError> {
             }
         }
         Command::Doctor { probe } => {
-            if invocation.dry_run {
-                return Err(CliError::usage("doctor does not accept --dry-run"));
-            }
-            let report = olyx_local_runtime::doctor::run(&invocation.config, probe).await;
+            let mut report = olyx_local_runtime::doctor::run(&invocation.config, probe).await;
+            report["installation"] = json!({"version": VERSION, "storage": "local"});
             print_json(&report)?;
             if report["ok"] == true {
                 Ok(())
@@ -153,8 +160,8 @@ async fn run_invocation(invocation: Invocation) -> Result<(), CliError> {
             }
             print_json(&output)
         }
-        Command::Check { config } => {
-            load_config(&config)?;
+        Command::Check { file } => {
+            load_config(&file)?;
             println!("Local configuration is valid");
             Ok(())
         }
@@ -162,9 +169,10 @@ async fn run_invocation(invocation: Invocation) -> Result<(), CliError> {
             trace_id,
             models,
             force_model,
+            dry_run,
         } => {
             let path = invocation.config;
-            if invocation.dry_run {
+            if dry_run {
                 return print_json(
                     &json!({"local": true, "config": path, "trace_id": trace_id, "compare_models": models, "force_model": force_model}),
                 );
@@ -180,65 +188,6 @@ async fn run_invocation(invocation: Invocation) -> Result<(), CliError> {
             }
             Ok(())
         }
-        Command::Inspect => print_json(
-            &json!({"config": invocation.config, "config_exists": std::path::Path::new(&invocation.config).is_file(), "storage": "local", "version": VERSION}),
-        ),
-        Command::Help(topic) => {
-            println!("{}", help_text(topic));
-            Ok(())
-        }
-        Command::Version => {
-            println!("oy {VERSION}");
-            Ok(())
-        }
-    }
-}
-#[derive(Debug, PartialEq)]
-struct Invocation {
-    command: Command,
-    config: String,
-    dry_run: bool,
-}
-impl Invocation {
-    fn parse(args: Vec<String>) -> Result<Self, CliError> {
-        let mut config = env::var("OLYX_CONFIG").unwrap_or_else(|_| "olyx.json".into());
-        let mut dry_run = false;
-        let mut positionals = Vec::new();
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "--config" => {
-                    i += 1;
-                    config = args
-                        .get(i)
-                        .filter(|s| !s.is_empty() && !s.starts_with('-'))
-                        .cloned()
-                        .ok_or_else(|| CliError::usage("--config needs a file path"))?;
-                }
-                "--dry-run" => dry_run = true,
-                "-h" | "--help" if positionals.is_empty() => {
-                    return Ok(Self {
-                        command: Command::Help(help::HelpTopic::General),
-                        config,
-                        dry_run,
-                    })
-                }
-                "-V" | "--version" => {
-                    return Ok(Self {
-                        command: Command::Version,
-                        config,
-                        dry_run,
-                    })
-                }
-                other => positionals.push(other.to_owned()),
-            }
-            i += 1;
-        }
-        Ok(Self {
-            command: Command::parse(positionals)?,
-            config,
-            dry_run,
-        })
     }
 }
 fn load_config(path: &str) -> Result<olyx_local_runtime::config::Config, CliError> {
@@ -314,6 +263,9 @@ mod tests {
         let parsed =
             Invocation::parse(vec!["debug".into(), "--config".into(), "local.json".into()])
                 .unwrap();
-        assert_eq!(parsed.config, "local.json");
+        let ParsedInvocation::Run(invocation) = parsed else {
+            panic!("expected command")
+        };
+        assert_eq!(invocation.config, "local.json");
     }
 }

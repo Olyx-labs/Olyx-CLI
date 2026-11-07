@@ -54,7 +54,8 @@ To use the shorter `oy` command throughout this guide:
 npm install -g olyx-cli
 ```
 
-Or replace `oy` in each example with `npx olyx-cli`. For a source checkout, see the
+The commands are equivalent: `npx olyx-cli doctor` runs the same command as
+installed `oy doctor`. This guide uses `oy` from here onward. For a source checkout, see the
 [contributor installation guide](https://docs.olyxai.io/getting-started/installation/#build-from-source-contributors).
 
 ### 2. Connect a model
@@ -120,13 +121,13 @@ trace ID. To use another configuration file, pass `--config FILE` or set
 
 ```sh
 export OLYX_SERVER_API_KEY=your-application-secret
-oy serve --local
+oy serve
 ```
 
 Point your application's compatible client at `http://127.0.0.1:8787/v1`, use
 `fast` as the model, and send the application secret as its API key. This is
 separate from your provider key. `127.0.0.1` refers to the machine running
-the server; `--local` only accepts connections from that machine.
+the server. By default, it only accepts connections from that machine.
 
 For example, keep the server running and send a request from another terminal:
 
@@ -169,16 +170,13 @@ but can still contain sensitive application data.
 ## Contributing
 
 See the [contributing guide](https://github.com/Olyx-labs/Olyx-CLI/blob/master/CONTRIBUTING.md)
-for development setup. From a source checkout, run the account-free test suite:
+for development setup. From a public source checkout, run:
 
 ```sh
-./scripts/test-providers
+cargo test --locked --workspace
 ```
 
-These checks use local test servers and plugins with predictable responses.
-They check how Olyx handles requests and failures; they do not establish live
-access to every model provider. See [provider verification](docs/provider-testing.md)
-for optional live checks.
+See [provider verification](docs/provider-testing.md) for optional live checks.
 
 Report vulnerabilities through the [security policy](https://github.com/Olyx-labs/Olyx-CLI/blob/master/SECURITY.md).
 Release procedures are in the [maintainer guide](https://github.com/Olyx-labs/Olyx-CLI/blob/master/RELEASING.md).

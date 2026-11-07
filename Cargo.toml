@@ -1,6 +1,6 @@
 [package]
 name = "olyx-cli"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Standalone model routing, replay, debugging, and an application HTTP endpoint"
@@ -26,6 +26,7 @@ debug = 0
 strip = "symbols"
 
 [dependencies]
+clap = { version = "4.5", default-features = false, features = ["derive", "env", "std", "help", "usage", "error-context"] }
 olyx-local-runtime = { path = "runtime" }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }

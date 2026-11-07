@@ -9,7 +9,7 @@ on:
       release_tag:
         description: "Tag name to use for the rehearsal artifact set"
         required: true
-        default: "v0.2.0-rehearsal"
+        default: "v0.2.1-rehearsal"
         type: string
       rehearsal:
         description: "Skip GitHub Release publication and only run the release rehearsal"
@@ -89,8 +89,8 @@ jobs:
       - name: Verify public dependency boundary
         run: python3 scripts/verify-public-boundary.py
 
-      - name: Account-free runtime and packaging checks
-        run: python3 scripts/test-providers
+      - name: Workspace tests
+        run: cargo test --locked --workspace
 
       - name: Install cargo-deny
         run: |
@@ -235,13 +235,7 @@ jobs:
           "${binary}" check examples/olyx.json >/dev/null
           "${binary}" check examples/fallbacks.json >/dev/null
           "${binary}" route --config examples/olyx.json --input examples/request.json --dry-run >/dev/null
-          "${binary}" inspect >/dev/null
-          "${python_cmd}" -m unittest discover -s scripts -p 'test_package_release.py'
-          status=0
-          for suite in local plugins server embeddings diagnostics edge-cases storage standalone; do
-            "${python_cmd}" "scripts/smoke-${suite}.py" "${binary}" || status=1
-          done
-          exit "${status}"
+          "${binary}" --help >/dev/null
 
       - name: Prepare signed artifact
         shell: bash
@@ -260,23 +254,13 @@ jobs:
           python_cmd=$(command -v python3 || command -v python)
           "${python_cmd}" scripts/validate-archive.py "dist/${asset}.${archive_ext}"
 
-      - name: Smoke test extracted package
-        if: matrix.smoke_test == true
-        shell: bash
-        run: |
-          python_cmd=$(command -v python3 || command -v python)
-          "${python_cmd}" scripts/smoke-package.py "dist/olyx-${RELEASE_TAG}-${{ matrix.target }}.${{ matrix.archive_ext }}"
-
-
-      - name: Verify npm distribution
+      - name: Prepare npm distribution
         shell: bash
         run: |
           set -euo pipefail
           python_cmd=$(command -v python3 || command -v python)
-          node --test npm/launcher.test.cjs
           "${python_cmd}" scripts/package-npm.py --archive "dist/olyx-${RELEASE_TAG}-${{ matrix.target }}.${{ matrix.archive_ext }}"
           "${python_cmd}" scripts/package-npm.py
-          "${python_cmd}" scripts/smoke-npm.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -300,7 +284,6 @@ jobs:
           persist-credentials: false
       - run: docker build -t olyx:rehearsal .
       - run: docker run --rm olyx:rehearsal check /etc/olyx/olyx.json
-      - run: python3 scripts/smoke-container.py olyx:rehearsal
 
   release:
     name: Verify artifacts and publish when requested

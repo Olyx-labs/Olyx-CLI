@@ -1,8 +1,9 @@
 FROM rust:1.88-bookworm AS build
 WORKDIR /build
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 COPY runtime ./runtime
+COPY examples/plugins/adapter.py examples/plugins/olyx_plugin.py ./examples/plugins/
 RUN cargo build --locked --release
 
 FROM debian:bookworm-slim

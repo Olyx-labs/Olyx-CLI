@@ -13,7 +13,7 @@ body:
     id: version
     attributes:
       label: CLI version
-      placeholder: oy 0.2.0
+      placeholder: oy 0.2.1
     validations:
       required: true
   - type: input

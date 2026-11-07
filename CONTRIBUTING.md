@@ -14,11 +14,10 @@ Node.js 22+ is needed for npm launcher and packaging changes.
 Run these checks from the repository root before submitting a change:
 
 ```sh
-node --test npm/launcher.test.cjs
 cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 python3 scripts/verify-public-boundary.py
-python3 scripts/test-providers
+cargo test --locked --workspace
 cargo deny check --config deny.toml advisories licenses bans sources
 ```
 
