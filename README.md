@@ -27,8 +27,13 @@ oy --version
 oy 0.2.1
 ```
 
-The npm distribution requires Node.js 22 or newer and currently provides
-**0.2.0**. Use the GitHub download for 0.2.1 until its npm packages are published.
+With Node.js 22 or newer, you can also install the matching npm release:
+
+```sh
+npm install -g olyx-cli@0.2.1
+```
+
+To run without a global installation, use `npx olyx-cli@0.2.1 --help`.
 External plugins may require their own language runtime.
 
 ## Quickstart
