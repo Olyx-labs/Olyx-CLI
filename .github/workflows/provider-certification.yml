@@ -19,8 +19,8 @@ jobs:
           persist-credentials: false
       - name: Build CLI
         run: |
-          rustup toolchain install 1.88 --profile minimal --no-self-update
-          cargo +1.88 build --locked --release --bin oy
+          rustup toolchain install 1.89 --profile minimal --no-self-update
+          cargo +1.89 build --locked --release --bin oy
       - name: Certify selected routes
         env:
           CERT_CONFIG: ${{ vars.OLYX_CERTIFICATION_CONFIG }}

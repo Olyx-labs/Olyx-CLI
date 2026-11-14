@@ -43,10 +43,10 @@ The source and artifacts must pass that rehearsal before creating the release ta
 
 ## Package a local build
 
-Release builders need Rust 1.88+ and a C compiler; end users do not. Package an already-built executable with:
+Release builders need Rust 1.89+ and a C compiler; end users do not. Package an already-built executable with:
 
 ```sh
-RUSTFLAGS="--remap-path-prefix=$HOME=/build" cargo +1.88.0 build --locked --release --bin oy
+RUSTFLAGS="--remap-path-prefix=$HOME=/build" cargo +1.89.0 build --locked --release --bin oy
 python3 scripts/package-release.py --binary target/release/oy --version v0.2.1 --target aarch64-apple-darwin --output dist
 python3 scripts/validate-archive.py dist/olyx-v0.2.1-aarch64-apple-darwin.tar.gz
 ```

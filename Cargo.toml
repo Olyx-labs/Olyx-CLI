@@ -2,7 +2,7 @@
 name = "olyx-cli"
 version = "0.2.1"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "Standalone model routing, replay, debugging, and an application HTTP endpoint"
 authors = ["Olyx Labs <hello@olyxai.io>"]
 license = "Apache-2.0"

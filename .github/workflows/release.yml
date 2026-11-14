@@ -31,7 +31,7 @@ env:
   REHEARSAL: ${{ github.event_name == 'workflow_dispatch' && inputs.rehearsal || false }}
   OIDC_IDENTITY: ${{ format('https://github.com/Olyx-labs/Olyx-CLI/.github/workflows/release.yml@{0}', github.ref) }}
   RUSTFLAGS: -D warnings
-  RUST_VERSION: "1.88"
+  RUST_VERSION: "1.89"
   CARGO_DENY_VERSION: "0.19.8"
   COSIGN_VERSION: "3.1.3"
 
