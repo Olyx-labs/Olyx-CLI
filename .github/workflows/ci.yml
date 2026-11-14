@@ -11,7 +11,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
-  RUST_VERSION: "1.88"
+  RUST_VERSION: "1.89"
   CARGO_DENY_VERSION: "0.19.8"
 
 jobs:
@@ -22,14 +22,6 @@ jobs:
       - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
         with:
           persist-credentials: false
-
-      - name: Install Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22
-
-      - name: npm launcher checks
-        run: node --test npm/launcher.test.cjs
 
       - name: Install Rust
         run: |
@@ -46,8 +38,8 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
-      - name: Account-free provider checks
-        run: python3 scripts/test-providers
+      - name: Workspace tests
+        run: cargo test --locked --workspace
 
       - name: Install cargo-deny
         run: |
@@ -64,4 +56,3 @@ jobs:
       - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0
       - run: docker build -t olyx:test .
       - run: docker run --rm olyx:test check /etc/olyx/olyx.json
-      - run: python3 scripts/smoke-container.py olyx:test

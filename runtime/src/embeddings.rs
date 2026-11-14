@@ -199,6 +199,7 @@ impl State {
         }
         let mut last_failure = None;
         for candidate in candidates {
+            let attempt = crate::attempt::Attempt::new(self, id, candidate, alias, &body);
             let started = Instant::now();
             if candidate.protocol == Protocol::Plugin {
                 let mut payload = body.clone();
@@ -207,9 +208,7 @@ impl State {
                     candidate,
                     "embeddings",
                     &payload,
-                    self.provider_keys
-                        .get(&candidate.api_key_env)
-                        .map(String::as_str),
+                    attempt.optional_credential(),
                     self.config.policy.max_embedding_response_bytes,
                     &mut |_| Ok(()),
                 )
@@ -225,34 +224,19 @@ impl State {
                 });
                 match result {
                     Ok((output, summary)) => {
-                        let cost = output["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as f64
-                            * candidate.input_per_million
-                            / 1_000_000.0;
-                        self.store
-                            .lock()
-                            .await
-                            .record(
-                                id,
-                                &candidate.model,
-                                &body,
-                                &summary,
-                                (cost, started.elapsed().as_millis(), true),
-                            )
-                            .map_err(storage_error)?;
+                        let cost = crate::usage_cost::embeddings(candidate, &output);
+                        attempt
+                            .record(&summary, (cost, started.elapsed().as_millis(), true))
+                            .await?;
                         return Ok(output);
                     }
                     Err(error) => {
-                        self.store
-                            .lock()
-                            .await
+                        attempt
                             .record(
-                                id,
-                                &candidate.model,
-                                &body,
                                 &json!({"reason":error.code}),
                                 (0.0, started.elapsed().as_millis(), false),
                             )
-                            .map_err(storage_error)?;
+                            .await?;
                         if matches!(
                             error.code.as_str(),
                             "plugin_unavailable" | "plugin_rate_limited"
@@ -264,22 +248,15 @@ impl State {
                     }
                 }
             }
-            let key = match self.provider_keys.get(&candidate.api_key_env) {
-                Some(key) => key,
-                None if candidate.api_key_env.is_empty() => "",
-                None => {
-                    let error = crate::diagnostics::missing_credential(candidate, alias);
-                    self.store
-                        .lock()
-                        .await
+            let key = match attempt.credential() {
+                Ok(key) => key,
+                Err(error) => {
+                    attempt
                         .record(
-                            id,
-                            &candidate.model,
-                            &body,
                             &json!({"reason":error.code,"request_sent":false}),
                             (0.0, 0, false),
                         )
-                        .map_err(storage_error)?;
+                        .await?;
                     return Err(error);
                 }
             };
@@ -294,27 +271,19 @@ impl State {
             } else {
                 builder.bearer_auth(key)
             };
-            let response = builder.json(&payload).send().await;
-            let mut response = match response {
-                Ok(r) => r,
-                Err(_) => {
-                    self.store.lock().await.record(id,&candidate.model,&body,&json!({"reason":"provider_transport_failure","provider":candidate.base_url}),(0.0,started.elapsed().as_millis(),false)).map_err(storage_error)?;
-                    last_failure =
-                        Some(crate::diagnostics::provider_failure(candidate, alias, None));
-                    continue;
-                }
-            };
-            if !response.status().is_success() {
-                let status = response.status();
-                self.store.lock().await.record(id,&candidate.model,&body,&json!({"reason":"provider_rejected_request","status":status.as_u16(),"provider":candidate.base_url}),(0.0,started.elapsed().as_millis(),false)).map_err(storage_error)?;
-                let error =
-                    crate::diagnostics::provider_failure(candidate, alias, Some(status.as_u16()));
-                if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
+            let mut response = match attempt.send(builder.json(&payload), started).await {
+                Ok(response) => response,
+                Err(error)
+                    if error
+                        .diagnostic
+                        .as_ref()
+                        .is_some_and(|diagnostic| diagnostic.retryable) =>
+                {
                     last_failure = Some(error);
                     continue;
                 }
-                return Err(error);
-            }
+                Err(error) => return Err(error),
+            };
             let result = async {
                 let limit = self.config.policy.max_embedding_response_bytes;
                 if response.content_length().is_some_and(|n| n > limit as u64) {
@@ -344,34 +313,19 @@ impl State {
             .await;
             match result {
                 Ok((output, summary)) => {
-                    let cost = output["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as f64
-                        * candidate.input_per_million
-                        / 1_000_000.0;
-                    self.store
-                        .lock()
-                        .await
-                        .record(
-                            id,
-                            &candidate.model,
-                            &body,
-                            &summary,
-                            (cost, started.elapsed().as_millis(), true),
-                        )
-                        .map_err(storage_error)?;
+                    let cost = crate::usage_cost::embeddings(candidate, &output);
+                    attempt
+                        .record(&summary, (cost, started.elapsed().as_millis(), true))
+                        .await?;
                     return Ok(output);
                 }
                 Err(e) => {
-                    self.store
-                        .lock()
-                        .await
+                    attempt
                         .record(
-                            id,
-                            &candidate.model,
-                            &body,
                             &json!({"reason":e.code}),
                             (0.0, started.elapsed().as_millis(), false),
                         )
-                        .map_err(storage_error)?;
+                        .await?;
                     return Err(crate::diagnostics::response_failure(e, candidate, alias));
                 }
             }

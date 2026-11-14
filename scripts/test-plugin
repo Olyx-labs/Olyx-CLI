@@ -24,7 +24,7 @@ spec.loader.exec_module(certification)
 @contextmanager
 def gateway(binary, config):
     token = secrets.token_hex(24)
-    process = subprocess.Popen([str(binary), 'serve', '--local', '--port', '0', '--config', str(config)],
+    process = subprocess.Popen([str(binary), 'serve', '--port', '0', '--config', str(config)],
                                env={**os.environ, 'OLYX_SERVER_API_KEY': token}, stdout=subprocess.DEVNULL,
                                stderr=subprocess.PIPE, text=True)
     lines = queue.Queue()

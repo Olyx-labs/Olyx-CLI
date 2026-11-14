@@ -1,8 +1,7 @@
 # Provider testing and verification
 
-You can develop and test adapters without buying access to every provider.
-The ordinary CI suite uses account-free local providers, synthetic response
-fixtures, and adversarial streams. Live certification is a separate opt-in step.
+Adapters can be developed with local fixtures. Live certification is a separate
+opt-in step that requires access to the endpoint being checked.
 
 ## What the checks establish
 
@@ -13,55 +12,18 @@ parameter, or future provider version. OpenAI-compatible services such as Groq
 and Mistral share an adapter but still need their own live checks; a result
 from another provider does not establish theirs.
 
-## Account-free checks
+## Public source checks
 
-Run these commands from a source checkout. The npm package does
-not include the full development test suite.
-
-```sh
-./scripts/test-providers
-```
-
-This command builds the debug CLI, runs Rust unit tests, all eight integration
-suites, and the Python verification tests, then prints a per-protocol coverage
-summary. It requires Rust/Cargo, a C compiler, and Python 3, with no provider
-accounts. The initial build may download dependencies. It never starts Docker.
-Local suites receive a restricted environment without provider credentials.
-
-Use an existing binary to skip the Cargo build and Rust unit tests:
+Run the workspace tests from a public source checkout:
 
 ```sh
-python3 scripts/test-providers --binary target/release/oy --report provider-tests.json
+cargo test --locked --workspace
 ```
 
-The JSON report includes suite status and local contract coverage; failed suites
-do not stop the remaining checks. A failure or timeout makes the command exit
-nonzero. Report files must be new. Raw subprocess output and local paths are
-omitted from the report and console summary.
-
-You can combine local checks with explicit live certification:
-
-```sh
-./scripts/test-providers --live-config /path/to/private-provider-config.json \
-  --alias huggingface --require-live --report provider-tests-live.json
-```
-
-Live checks run only after local checks pass. Without `--live-config` and
-`--alias`, no live provider is called, even when credentials are present.
-`--require-live` fails if a selected route is skipped. Live summaries and detailed
-sanitized evidence appear in the combined report. Model support and charges
-remain subject to the certification limits below.
-
-Local HTTP fixtures cover compatible JSON/SSE and errors. Plugin fixtures cover
-version negotiation, capability rejection, tools, streaming, embeddings, lifecycle,
-credential isolation, trace/replay, and failure behavior. Native API translators
-are not in the core and have no built-in service compatibility claim. Use the
-[plugin conformance kit](plugins.md) to test an independently developed adapter.
-
-Keep reusable synthetic fixtures in these suites when adding a regression. Do
-not commit raw production traces or recordings: they may contain credentials,
-customer data, model responses, or account identifiers. The certification report
-is sanitized test evidence, not a wire-response recording.
+For independently developed adapters, use the [plugin conformance kit](plugins.md)
+with a fixture configuration. Local results do not establish live provider compatibility.
+Do not commit production traces or recordings: they may contain credentials,
+customer data, or model responses.
 
 ## Optional live checks
 
